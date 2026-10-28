@@ -1,6 +1,6 @@
 # Desktop Pet 全局界面规范与实现
 
-版本0.25.0，2026-10-28。设置页“宠物形象”图库可切换默认/历史图片并去背景；桌宠默认显示内置 3D 狐狸，也保留原图 2D 模式并保留轻微上下浮动，气泡按内容自适应宽高，沿用暖奶油底色与珊瑚橙强调色；对话改为 Markdown 正文加末尾 tasks 任务块协议，助手消息原生渲染 Markdown，流式内容在历史占位消息中原地更新；新增按任务标记的钉钉群通知；对话支持修改、完成、删除待办，同标题多条时以序号列表二次确认；同一待办最多提醒3次，之后标记为延期并停止提醒；侧栏去掉“工作空间”小标题并放大导航项。
+版本0.26.0，2026-10-28。设置页“宠物形象”图库可切换默认/历史图片并去背景；桌宠默认显示内置 3D 狐狸并带待机呼吸、眨眼与尾巴/气球摆动，也保留原图 2D 模式并保留轻微上下浮动，气泡按内容自适应宽高，沿用暖奶油底色与珊瑚橙强调色；对话改为 Markdown 正文加末尾 tasks 任务块协议，助手消息原生渲染 Markdown，流式内容在历史占位消息中原地更新；新增按任务标记的钉钉群通知；对话支持修改、完成、删除待办，同标题多条时以序号列表二次确认；同一待办最多提醒3次，之后标记为延期并停止提醒；侧栏去掉“工作空间”小标题并放大导航项。
 
 ## 1. 设计变量
 
@@ -116,7 +116,9 @@ ui/home.py的HomePageMixin复用现有TaskStore，不新增表结构。today_ove
 - 窗口：2D 为220×260，3D 为220×340；3D 画布从 y=88 开始，顶部 84px 继续留给气泡，两者不重叠。切换时保持窗口底边不变（3D 顶边上移80px），并写入 pet_position 与 pet_mode。
 - 渲染：ui/pet3d.py 创建透明 QWebEngineView，加载 assets/pet3d/index.html；three.js（MIT）与场景文件随程序打包，不访问网络。页面背景设为透明，窗口继续使用 FramelessWindowHint + WindowStaysOnTopHint + WA_TranslucentBackground。场景为正视相机下的橙色狐狸：蓝色卫衣、奶油色口鼻、橙色尾巴与蓝色气球，柔和三点光与落地阴影。
 - 交互：WebEngine 内部渲染控件会直接接收鼠标，create_view 对其全部子控件安装事件过滤器，由 Pet 统一处理拖动、单击反馈、双击打开主窗与右键菜单；3D 模式下暂停 2D 动画定时器与动作帧。
-- 回退：未安装 PyQtWebEngine、平台为 offscreen 或视图创建失败时自动保持 2D，不阻塞启动；状态栏给出提示。首版 3D 为静态姿势，阶段 2 再加入呼吸、眨眼与尾巴摆动。
+- 待机动画（0.26）：requestAnimationFrame 驱动呼吸（3.6秒周期，卫衣缩放约 ±1.2%/±1.8%，整只宠物上下浮动0.012）、随机眨眼（间隔2.6–5.4秒，闭合0.13秒，眼睛与高光同步压缩）、尾巴左右摆动（4.8秒）与气球绕右手轻摆（5.2秒，绕 X/Z 轴）。页面暴露 `window.pet3d.setPaused(bool)`：暂停时 `setAnimationLoop(null)` 并只渲染一帧，恢复时重置 Clock 后继续。
+- 暂停联动：右键“暂停动画/恢复动画”在两种模式都显示；3D 调用 setPaused，2D 启停定时器，状态统一写入 pet_paused。加载完成、启用 3D、切回 2D 时都会同步暂停状态，切回 2D 会先停掉 3D 渲染循环。
+- 回退：未安装 PyQtWebEngine、平台为 offscreen 或视图创建失败时自动保持 2D，不阻塞启动；状态栏给出提示。
 
 ### 钉钉群通知
 
@@ -150,7 +152,7 @@ Fluent滚动区域沿用细滚动轨与交互展开；保留原生控件的区�
 
 ## 6. 验证与维护
 
-本轮通过`QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`运行99项测试；新增“3D 模式在 offscreen 环境回退 2D 且 pet_mode 可持久化”回归；此前“3次提醒后延期且重置通知/延后不再触发”“编辑与恢复待办清零延期状态”“第3次提醒卡禁用延后并在待办页显示延期”等回归保持通过。3D 透明背景、原生鼠标拖动、2D/3D 往返切换使用 `.artifacts/capture_pet3d.py`、`test_pet3d_drag.py`、`test_pet3d_toggle.py` 在真实桌面验证。视觉检查使用.artifacts/capture_warm_ui.py同时生成offscreen与Windows原生渲染截图，覆盖首页、聊天、下拉、待办、宠物图库设置、设置下半部、到期提醒与桌宠。
+本轮通过`QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`运行99项测试；新增“3D 模式在 offscreen 环境回退 2D 且 pet_mode 可持久化”回归；此前“3次提醒后延期且重置通知/延后不再触发”“编辑与恢复待办清零延期状态”“第3次提醒卡禁用延后并在待办页显示延期”等回归保持通过。3D 透明背景、原生鼠标拖动、2D/3D 往返切换使用 `.artifacts/capture_pet3d.py`、`test_pet3d_drag.py`、`test_pet3d_toggle.py` 在真实桌面验证；0.26 的待机动画与暂停静止使用 `test_pet3d_anim.py` 对比间隔1.2秒的连续截图（运行帧不同、暂停帧一致）。视觉检查使用.artifacts/capture_warm_ui.py同时生成offscreen与Windows原生渲染截图，覆盖首页、聊天、下拉、待办、宠物图库设置、设置下半部、到期提醒与桌宠。
 
 运行unittest、tools/check_fluent.py及打包自检；检查长消息、连续URL、流式更新、会话切换、滚动位置、草稿确认与窗口销毁。高DPI与多显示器缩放仍需在真实桌面环境验收，尤其是提醒卡夹紧屏幕边缘和桌宠上方空间不足时的回退位置。
 

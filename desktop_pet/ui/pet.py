@@ -148,6 +148,7 @@ class Pet(QWidget):
                 from .pet3d import create_view
                 self.view3d = create_view(self, self)
                 self.view3d.installEventFilter(self)
+                self.view3d.loadFinished.connect(self.apply_3d_pause)
             except Exception:
                 self.view3d_failed = True
         if self.view3d is None:
@@ -159,16 +160,24 @@ class Pet(QWidget):
         self.view3d.show()
         self.mode = '3d'
         self.timer.stop()
+        self.apply_3d_pause()
         self.update()
         self.ensure_visible()
         if persist:
             self.save_preferences()
         return True
 
+    def apply_3d_pause(self, *args):
+        if self.view3d is not None:
+            flag = 'true' if self.paused else 'false'
+            self.view3d.page().runJavaScript(f'window.pet3d && window.pet3d.setPaused({flag})')
+
     def disable_3d(self, persist=True):
         if self.mode != '3d':
             return
         delta = WINDOW_3D.height() - WINDOW_2D.height()
+        if self.view3d is not None:
+            self.view3d.page().runJavaScript('window.pet3d && window.pet3d.setPaused(true)')
         self.view3d.hide()
         self.setFixedSize(WINDOW_2D)
         self.move(self.x(), self.y() + delta)
@@ -325,7 +334,9 @@ class Pet(QWidget):
 
     def toggle_animation(self):
         self.paused = not self.paused
-        if self.paused:
+        if self.mode == '3d':
+            self.apply_3d_pause()
+        elif self.paused:
             self.timer.stop()
         else:
             self.action_started = time.monotonic() - self.frame_index / self.sequences.get(self.action, {'fps': 10})['fps']
@@ -348,8 +359,7 @@ class Pet(QWidget):
         menu.addAction('打开聊天与待办', self.owner.show_main)
         menu.addAction('更换宠物图片', self.owner.choose_image)
         menu.addAction('切回 2D 形象' if self.mode == '3d' else '切换到 3D 形象', self.toggle_3d)
-        if self.mode == '2d':
-            menu.addAction('恢复动画' if self.paused else '暂停动画', self.toggle_animation)
+        menu.addAction('恢复动画' if self.paused else '暂停动画', self.toggle_animation)
         menu.addAction('重置宠物位置', self.reset_position)
         menu.addAction('退出', self.owner.quit_app)
         menu.exec_(pos)

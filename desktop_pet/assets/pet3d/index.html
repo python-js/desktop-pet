@@ -48,20 +48,23 @@
     return new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 6, 20));
   }
 
-  // 尾巴：橙色曲线加奶油色尾尖
+  // 尾巴：橙色曲线加奶油色尾尖，绕根部摆动
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-0.34, 0.72, -0.24);
+  pet.add(tailPivot);
   const tailCurve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-0.34, 0.72, -0.24),
-    new THREE.Vector3(-0.72, 0.6, -0.3),
-    new THREE.Vector3(-0.98, 0.82, -0.22),
-    new THREE.Vector3(-0.86, 1.08, -0.12)
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(-0.38, -0.12, -0.06),
+    new THREE.Vector3(-0.64, 0.1, 0.02),
+    new THREE.Vector3(-0.52, 0.36, 0.12)
   ]);
   const tail = new THREE.Mesh(new THREE.TubeGeometry(tailCurve, 32, 0.15, 12, false), material(ORANGE));
-  pet.add(tail);
+  tailPivot.add(tail);
   const tailTip = ball(0.19, 28);
   tailTip.scale.set(1, 1.2, 1);
-  tailTip.position.set(-0.86, 1.08, -0.12);
+  tailTip.position.set(-0.52, 0.36, 0.12);
   tailTip.material = material(CREAM);
-  pet.add(tailTip);
+  tailPivot.add(tailTip);
 
   // 腿与脚掌
   [-1, 1].forEach(function (side) {
@@ -166,17 +169,21 @@
   pet.add(chin);
 
   // 眼睛
+  const eyes = [];
+  const shines = [];
   [-1, 1].forEach(function (side) {
     const eye = ball(1, 32);
     eye.scale.set(0.09, 0.115, 0.055);
     eye.position.set(side * 0.19, 2.02, 0.42);
     eye.material = material(BLACK, { roughness: 0.2 });
+    eyes.push(eye);
     pet.add(eye);
 
     const shine = ball(1, 16);
     shine.scale.set(0.03, 0.04, 0.02);
     shine.position.set(side * 0.19 + 0.03, 2.06, 0.475);
     shine.material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    shines.push(shine);
     pet.add(shine);
   });
 
@@ -199,27 +206,30 @@
   tongue.material = material(PINK, { roughness: 0.7 });
   pet.add(tongue);
 
-  // 气球与绳子
+  // 气球与绳子，绕右手轻轻晃动
+  const balloonPivot = new THREE.Group();
+  balloonPivot.position.set(0.77, 1.58, 0.12);
+  pet.add(balloonPivot);
   const balloon = ball(1, 40);
   balloon.scale.set(0.29, 0.33, 0.29);
-  balloon.position.set(1.0, 2.55, 0.05);
+  balloon.position.set(0.23, 0.97, -0.07);
   balloon.material = material(BLUE, { roughness: 0.55 });
-  pet.add(balloon);
+  balloonPivot.add(balloon);
   const knot = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.09, 12), material(BLUE_DARK));
-  knot.position.set(1.0, 2.18, 0.05);
+  knot.position.set(0.23, 0.6, -0.07);
   knot.rotation.x = Math.PI;
-  pet.add(knot);
+  balloonPivot.add(knot);
 
   const stringCurve = new THREE.QuadraticBezierCurve3(
-    new THREE.Vector3(0.78, 1.62, 0.12),
-    new THREE.Vector3(1.02, 1.95, 0.1),
-    new THREE.Vector3(1.0, 2.14, 0.05)
+    new THREE.Vector3(0.01, 0.04, 0),
+    new THREE.Vector3(0.25, 0.37, -0.02),
+    new THREE.Vector3(0.23, 0.56, -0.07)
   );
   const string = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(stringCurve.getPoints(24)),
     new THREE.LineBasicMaterial({ color: 0x8a837c })
   );
-  pet.add(string);
+  balloonPivot.add(string);
 
   // 柔和落地阴影
   const shadowCanvas = document.createElement('canvas');
@@ -252,6 +262,52 @@
   fill.position.set(-4.5, 2.5, 3);
   scene.add(fill);
 
+  const clock = new THREE.Clock();
+  let elapsed = 0;
+  let blinkUntil = 0;
+  let nextBlink = 2.4;
+
+  function animate() {
+    const delta = Math.min(clock.getDelta(), 0.1);
+    elapsed += delta;
+
+    // 呼吸：卫衣轻微起伏，整只宠物随之上下浮动。
+    const breath = Math.sin(elapsed * Math.PI * 2 / 3.6);
+    hoodie.scale.set(0.5 * (1 + 0.012 * breath),
+                     0.6 * (1 + 0.018 * breath),
+                     0.4 * (1 + 0.012 * breath));
+    pet.position.y = 0.012 * breath;
+
+    const tailPhase = elapsed * Math.PI * 2 / 4.8;
+    tailPivot.rotation.y = 0.09 * Math.sin(tailPhase);
+    tailPivot.rotation.z = 0.05 * Math.sin(tailPhase + 0.8);
+
+    const balloonPhase = elapsed * Math.PI * 2 / 5.2;
+    balloonPivot.rotation.z = 0.055 * Math.sin(balloonPhase);
+    balloonPivot.rotation.x = 0.03 * Math.sin(balloonPhase + 0.5);
+
+    if (elapsed >= nextBlink) {
+      blinkUntil = elapsed + 0.13;
+      nextBlink = elapsed + 2.6 + Math.random() * 2.8;
+    }
+    const closing = elapsed < blinkUntil ? Math.sin((blinkUntil - elapsed) / 0.13 * Math.PI) : 0;
+    const openness = 1 - closing * 0.92;
+    eyes.forEach(function (eye) { eye.scale.y = 0.115 * openness; });
+    shines.forEach(function (shine) { shine.scale.y = 0.04 * openness; });
+
+    renderer.render(scene, camera);
+  }
+
+  function setPaused(value) {
+    if (value) {
+      renderer.setAnimationLoop(null);
+      renderer.render(scene, camera);
+    } else {
+      clock.getDelta();
+      renderer.setAnimationLoop(animate);
+    }
+  }
+
   function resize() {
     const width = Math.max(1, window.innerWidth);
     const height = Math.max(1, window.innerHeight);
@@ -261,8 +317,10 @@
     renderer.render(scene, camera);
   }
 
+  window.pet3d = { setPaused: setPaused };
   window.addEventListener('resize', resize);
   resize();
+  renderer.setAnimationLoop(animate);
 })();
 </script>
 </body>
