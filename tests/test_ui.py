@@ -452,5 +452,37 @@ class UiSmokeTests(unittest.TestCase):
                     app.processEvents()
 
 
+    def test_3d_mode_falls_back_offscreen_and_persists(self):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        import json
+        from pathlib import Path
+        from unittest.mock import patch
+        from PyQt5.QtWidgets import QApplication
+        from desktop_pet.app import MainWindow
+
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
+                window = MainWindow()
+                window.timer.stop()
+                window.task_refresh_timer.stop()
+                try:
+                    self.assertEqual(window.pet.mode, '2d')
+                    self.assertFalse(window.pet.enable_3d(persist=False))
+                    self.assertEqual(window.pet.mode, '2d')
+                    window.settings['pet_mode'] = '3d'
+                    window.persist_settings()
+                    saved = json.loads((Path(folder) / 'settings.json').read_text(encoding='utf-8'))
+                    self.assertEqual(saved['pet_mode'], '3d')
+                finally:
+                    window.shutting_down = True
+                    window.pet.close()
+                    window.tray.hide()
+                    window.close()
+                    window.store.close()
+                    window.deleteLater()
+                    app.processEvents()
+
+
 if __name__ == '__main__':
     unittest.main()

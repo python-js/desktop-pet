@@ -837,6 +837,11 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
 
 
 def main():
+    try:
+        # 3D 视图使用的 QtWebEngine 需要在 QApplication 之前初始化。
+        from PyQt5 import QtWebEngineWidgets  # noqa: F401
+    except ImportError:
+        pass
     app = QApplication(sys.argv)
     app.setApplicationName('DesktopPet')
     lock = QLockFile(str(data_directory() / 'application.lock'))

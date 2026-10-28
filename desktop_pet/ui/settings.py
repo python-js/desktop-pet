@@ -55,6 +55,8 @@ class SettingsPageMixin:
                 for key in ('stream', 'remember_key', 'pet_paused'):
                     if isinstance(loaded.get(key), bool):
                         self.settings[key] = loaded[key]
+                if loaded.get('pet_mode') in ('2d', '3d'):
+                    self.settings['pet_mode'] = loaded['pet_mode']
                 position = loaded.get('pet_position')
                 if isinstance(position, list) and len(position) == 2 and all(type(v) is int and abs(v) <= 100000 for v in position):
                     self.settings['pet_position'] = position
@@ -235,7 +237,7 @@ class SettingsPageMixin:
         pet_note = QLabel('上传或切换后直接使用这张图片，不再生成动作。建议使用透明背景 PNG；纯色底图可先做背景移除。上传新图片会保留在下方历史中。')
         pet_note.setWordWrap(True)
         form.addRow(pet_note)
-        hint = QLabel('复杂照片暂不支持自动抠图，尚未实现 Live2D / 3D 生成。\n应用退出、关机或睡眠时无法即时提醒；再次运行或恢复时补检。\n数据目录：' + str(self.root))
+        hint = QLabel('3D 模式使用内置形象，可在宠物右键菜单中切换；上传图片用于 2D 模式。\n应用退出、关机或睡眠时无法即时提醒；再次运行或恢复时补检。\n数据目录：' + str(self.root))
         hint.setWordWrap(True)
         hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
         form.addRow(hint)
@@ -252,7 +254,7 @@ class SettingsPageMixin:
         settings = self.settings if settings is None else settings
         path = self.root / 'settings.json'
         temp = path.with_suffix('.tmp')
-        allowed = ('base_url', 'model', 'pet_image', 'pet_image_original', 'pet_images', 'active_session', 'stream', 'remember_key', 'pet_position', 'pet_paused', 'pet_animations', 'pet_animation_backup')
+        allowed = ('base_url', 'model', 'pet_image', 'pet_image_original', 'pet_images', 'active_session', 'stream', 'remember_key', 'pet_position', 'pet_paused', 'pet_animations', 'pet_animation_backup', 'pet_mode')
         temp.write_text(json.dumps({k: settings[k] for k in allowed if k in settings}, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(path)
 

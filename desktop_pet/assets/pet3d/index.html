@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Desktop Pet 3D</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; background: transparent; overflow: hidden;
+               user-select: none; -webkit-user-select: none; cursor: default; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<script src="three.min.js"></script>
+<script>
+(function () {
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+  renderer.setClearColor(0x000000, 0);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
+  camera.position.set(0, 1.4, 7.0);
+  camera.lookAt(0, 1.32, 0);
+
+  const ORANGE = 0xf07a22;
+  const CREAM = 0xf8e4c6;
+  const DARK = 0x3d2b23;
+  const BLACK = 0x241a16;
+  const BLUE = 0x1f8fe8;
+  const BLUE_DARK = 0x1476c9;
+  const PINK = 0xf28b8b;
+
+  const material = (color, extra) => new THREE.MeshStandardMaterial(
+    Object.assign({ color: color, roughness: 0.8, metalness: 0 }, extra || {}));
+
+  const pet = new THREE.Group();
+  scene.add(pet);
+
+  function ball(radius, segments) {
+    return new THREE.Mesh(new THREE.SphereGeometry(radius, segments || 40, segments || 40));
+  }
+
+  function capsule(radius, length) {
+    return new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 6, 20));
+  }
+
+  // 尾巴：橙色曲线加奶油色尾尖
+  const tailCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-0.34, 0.72, -0.24),
+    new THREE.Vector3(-0.72, 0.6, -0.3),
+    new THREE.Vector3(-0.98, 0.82, -0.22),
+    new THREE.Vector3(-0.86, 1.08, -0.12)
+  ]);
+  const tail = new THREE.Mesh(new THREE.TubeGeometry(tailCurve, 32, 0.15, 12, false), material(ORANGE));
+  pet.add(tail);
+  const tailTip = ball(0.19, 28);
+  tailTip.scale.set(1, 1.2, 1);
+  tailTip.position.set(-0.86, 1.08, -0.12);
+  tailTip.material = material(CREAM);
+  pet.add(tailTip);
+
+  // 腿与脚掌
+  [-1, 1].forEach(function (side) {
+    const leg = capsule(0.11, 0.24);
+    leg.position.set(side * 0.2, 0.3, 0.02);
+    leg.material = material(ORANGE);
+    pet.add(leg);
+
+    const paw = ball(0.14, 28);
+    paw.scale.set(0.95, 0.6, 1.25);
+    paw.position.set(side * 0.2, 0.09, 0.09);
+    paw.material = material(DARK);
+    pet.add(paw);
+  });
+
+  // 蓝色卫衣
+  const hoodie = ball(1, 48);
+  hoodie.scale.set(0.5, 0.6, 0.4);
+  hoodie.position.set(0, 0.93, 0);
+  hoodie.material = material(BLUE);
+  pet.add(hoodie);
+
+  const hood = ball(1, 36);
+  hood.scale.set(0.42, 0.26, 0.28);
+  hood.position.set(0, 1.55, -0.16);
+  hood.material = material(BLUE_DARK);
+  pet.add(hood);
+
+  const pocket = ball(1, 32);
+  pocket.scale.set(0.25, 0.13, 0.06);
+  pocket.position.set(0, 0.8, 0.37);
+  pocket.material = material(BLUE_DARK);
+  pet.add(pocket);
+
+  [-1, 1].forEach(function (side) {
+    const string = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 8), material(0xf7f4ee));
+    string.position.set(side * 0.08, 1.26, 0.4);
+    pet.add(string);
+
+    const bead = ball(0.03, 16);
+    bead.position.set(side * 0.08, 1.15, 0.4);
+    bead.material = material(0xf7f4ee);
+    pet.add(bead);
+  });
+
+  // 左臂自然下垂
+  const leftArm = capsule(0.11, 0.3);
+  leftArm.position.set(-0.52, 1.06, 0.05);
+  leftArm.rotation.z = -0.35;
+  leftArm.material = material(BLUE);
+  pet.add(leftArm);
+  const leftPaw = ball(0.115, 24);
+  leftPaw.position.set(-0.62, 0.82, 0.12);
+  leftPaw.material = material(DARK);
+  pet.add(leftPaw);
+
+  // 右臂举起牵气球
+  const rightArm = capsule(0.11, 0.34);
+  rightArm.position.set(0.55, 1.35, 0.06);
+  rightArm.rotation.z = -0.85;
+  rightArm.material = material(BLUE);
+  pet.add(rightArm);
+  const rightPaw = ball(0.115, 24);
+  rightPaw.position.set(0.77, 1.58, 0.12);
+  rightPaw.material = material(DARK);
+  pet.add(rightPaw);
+
+  // 头部
+  const head = ball(1, 48);
+  head.scale.set(0.54, 0.5, 0.47);
+  head.position.set(0, 1.98, 0);
+  head.material = material(ORANGE);
+  pet.add(head);
+
+  // 耳朵
+  [-1, 1].forEach(function (side) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.56, 3), material(ORANGE));
+    ear.position.set(side * 0.34, 2.48, -0.02);
+    ear.rotation.z = side * -0.2;
+    ear.rotation.y = Math.PI / 6;
+    pet.add(ear);
+
+    const inner = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.36, 3), material(CREAM));
+    inner.position.set(side * 0.34, 2.45, 0.05);
+    inner.rotation.z = side * -0.2;
+    inner.rotation.y = Math.PI / 6;
+    pet.add(inner);
+  });
+
+  // 奶油色脸颊与口鼻
+  [-1, 1].forEach(function (side) {
+    const cheek = ball(1, 32);
+    cheek.scale.set(0.26, 0.21, 0.16);
+    cheek.position.set(side * 0.17, 1.78, 0.36);
+    cheek.material = material(CREAM);
+    pet.add(cheek);
+  });
+  const chin = ball(1, 32);
+  chin.scale.set(0.2, 0.13, 0.12);
+  chin.position.set(0, 1.68, 0.4);
+  chin.material = material(CREAM);
+  pet.add(chin);
+
+  // 眼睛
+  [-1, 1].forEach(function (side) {
+    const eye = ball(1, 32);
+    eye.scale.set(0.09, 0.115, 0.055);
+    eye.position.set(side * 0.19, 2.02, 0.42);
+    eye.material = material(BLACK, { roughness: 0.2 });
+    pet.add(eye);
+
+    const shine = ball(1, 16);
+    shine.scale.set(0.03, 0.04, 0.02);
+    shine.position.set(side * 0.19 + 0.03, 2.06, 0.475);
+    shine.material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    pet.add(shine);
+  });
+
+  // 鼻子、嘴与舌头
+  const nose = ball(1, 24);
+  nose.scale.set(0.06, 0.045, 0.045);
+  nose.position.set(0, 1.84, 0.55);
+  nose.material = material(BLACK, { roughness: 0.35 });
+  pet.add(nose);
+
+  const mouth = ball(1, 24);
+  mouth.scale.set(0.09, 0.055, 0.03);
+  mouth.position.set(0, 1.73, 0.53);
+  mouth.material = material(0x7a2f2a, { roughness: 0.5 });
+  pet.add(mouth);
+
+  const tongue = ball(1, 20);
+  tongue.scale.set(0.06, 0.035, 0.02);
+  tongue.position.set(0, 1.71, 0.555);
+  tongue.material = material(PINK, { roughness: 0.7 });
+  pet.add(tongue);
+
+  // 气球与绳子
+  const balloon = ball(1, 40);
+  balloon.scale.set(0.29, 0.33, 0.29);
+  balloon.position.set(1.0, 2.55, 0.05);
+  balloon.material = material(BLUE, { roughness: 0.55 });
+  pet.add(balloon);
+  const knot = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.09, 12), material(BLUE_DARK));
+  knot.position.set(1.0, 2.18, 0.05);
+  knot.rotation.x = Math.PI;
+  pet.add(knot);
+
+  const stringCurve = new THREE.QuadraticBezierCurve3(
+    new THREE.Vector3(0.78, 1.62, 0.12),
+    new THREE.Vector3(1.02, 1.95, 0.1),
+    new THREE.Vector3(1.0, 2.14, 0.05)
+  );
+  const string = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(stringCurve.getPoints(24)),
+    new THREE.LineBasicMaterial({ color: 0x8a837c })
+  );
+  pet.add(string);
+
+  // 柔和落地阴影
+  const shadowCanvas = document.createElement('canvas');
+  shadowCanvas.width = 256;
+  shadowCanvas.height = 128;
+  const ctx = shadowCanvas.getContext('2d');
+  const gradient = ctx.createRadialGradient(128, 64, 4, 128, 64, 120);
+  gradient.addColorStop(0, 'rgba(60, 44, 35, 0.3)');
+  gradient.addColorStop(0.55, 'rgba(60, 44, 35, 0.12)');
+  gradient.addColorStop(1, 'rgba(60, 44, 35, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 256, 128);
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.2, 0.7),
+    new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(shadowCanvas),
+      transparent: true,
+      depthWrite: false
+    })
+  );
+  shadow.position.set(0, 0.02, -0.45);
+  shadow.renderOrder = -1;
+  pet.add(shadow);
+
+  scene.add(new THREE.HemisphereLight(0xfff6ea, 0x6d5a4d, 0.75));
+  const key = new THREE.DirectionalLight(0xffffff, 1.55);
+  key.position.set(3, 5.5, 6);
+  scene.add(key);
+  const fill = new THREE.DirectionalLight(0xffe2c6, 0.5);
+  fill.position.set(-4.5, 2.5, 3);
+  scene.add(fill);
+
+  function resize() {
+    const width = Math.max(1, window.innerWidth);
+    const height = Math.max(1, window.innerHeight);
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
+</body>
+</html>

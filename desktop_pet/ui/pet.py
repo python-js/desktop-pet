@@ -1,6 +1,6 @@
 """Local desktop pet interaction and screen placement."""
 import time
-from PyQt5.QtCore import Qt, QTimer, QSize, QRect
+from PyQt5.QtCore import QEvent, Qt, QTimer, QSize, QRect
 from PyQt5.QtGui import QColor, QFontMetrics, QImage, QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu
 from ..animations import load_sequences
@@ -12,6 +12,11 @@ BUBBLE_BOTTOM = 84
 BUBBLE_TEXT_HEIGHT = 58  # 气泡最大高度 82 减去上下 padding 11×2 与边框 1×2
 BUBBLE_PAD_WIDTH = 28  # 样式 padding 13×2 + 边框 1×2
 BUBBLE_PAD_HEIGHT = 24  # 样式 padding 11×2 + 边框 1×2
+
+WINDOW_2D = QSize(220, 260)
+# 3D 模式在顶部预留气泡区，3D 画布从 y=88 开始，互不遮挡。
+WINDOW_3D = QSize(220, 340)
+VIEW3D_TOP = 88
 
 
 def paint_default_pet(painter):
@@ -51,11 +56,14 @@ class Pet(QWidget):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.owner = owner
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(220, 260)
+        self.setFixedSize(WINDOW_2D)
         self.setToolTip('拖动移动 · 双击聊天 · 右键菜单')
         self.offset = None
         self.press_position = None
         self.dragged = False
+        self.mode = '2d'
+        self.view3d = None
+        self.view3d_failed = False
         self.paused = owner.settings.get('pet_paused', False)
         self.pixmap = QPixmap()
         self.sequences = {}
@@ -86,8 +94,12 @@ class Pet(QWidget):
         if isinstance(position, list) and len(position) == 2 and all(type(v) is int for v in position):
             self.move(*position)
         self.ensure_visible()
+        if owner.settings.get('pet_mode', '3d') == '3d':
+            self.enable_3d(persist=False)
 
     def animate(self):
+        if self.mode == '3d':
+            return
         self.phase = (time.monotonic() * 12.5) % 40
         self.advance_action()
         self.update()
@@ -100,7 +112,7 @@ class Pet(QWidget):
         self.update()
 
     def play_action(self, action):
-        if self.paused or action not in self.sequences:
+        if self.paused or self.mode == '3d' or action not in self.sequences:
             return
         if self.action == 'reminder' and action == 'touch':
             return
@@ -124,6 +136,78 @@ class Pet(QWidget):
     def load_image(self, path):
         self.pixmap = QPixmap(path) if path else QPixmap()
         self.update()
+
+    def enable_3d(self, persist=True):
+        """Show the local three.js scene; return False when WebEngine is unavailable."""
+        if self.mode == '3d':
+            return True
+        if QApplication.platformName() == 'offscreen':
+            return False
+        if self.view3d is None and not self.view3d_failed:
+            try:
+                from .pet3d import create_view
+                self.view3d = create_view(self, self)
+                self.view3d.installEventFilter(self)
+            except Exception:
+                self.view3d_failed = True
+        if self.view3d is None:
+            return False
+        delta = WINDOW_3D.height() - WINDOW_2D.height()
+        self.move(self.x(), self.y() - delta)
+        self.setFixedSize(WINDOW_3D)
+        self.view3d.setGeometry(0, VIEW3D_TOP, WINDOW_3D.width(), WINDOW_3D.height() - VIEW3D_TOP)
+        self.view3d.show()
+        self.mode = '3d'
+        self.timer.stop()
+        self.update()
+        self.ensure_visible()
+        if persist:
+            self.save_preferences()
+        return True
+
+    def disable_3d(self, persist=True):
+        if self.mode != '3d':
+            return
+        delta = WINDOW_3D.height() - WINDOW_2D.height()
+        self.view3d.hide()
+        self.setFixedSize(WINDOW_2D)
+        self.move(self.x(), self.y() + delta)
+        self.mode = '2d'
+        if not self.paused:
+            self.timer.start(40)
+        self.update()
+        self.ensure_visible()
+        if persist:
+            self.save_preferences()
+
+    def toggle_3d(self, checked=False):
+        if self.mode == '3d':
+            self.disable_3d()
+            self.owner.statusBar().showMessage('已切回 2D 形象。', 5000)
+        elif self.enable_3d():
+            self.owner.statusBar().showMessage('已切换到 3D 形象：拖动、双击和右键菜单仍然可用。', 6000)
+        else:
+            self.owner.statusBar().showMessage('当前环境无法启用 3D 视图，请确认已安装 PyQtWebEngine。', 8000)
+
+    def eventFilter(self, watched, event):
+        # WebEngine 会吞掉鼠标事件，这里转发拖动、双击和右键菜单。
+        if watched is self.view3d or (self.view3d is not None and self.view3d.isAncestorOf(watched)):
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self.press(event.globalPos())
+                return True
+            if event.type() == QEvent.MouseMove:
+                self.drag(event.globalPos(), event.buttons())
+                return True
+            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self.release(event.globalPos())
+                return True
+            if event.type() == QEvent.MouseButtonDblClick:
+                self.owner.show_main()
+                return True
+            if event.type() == QEvent.ContextMenu:
+                self.show_menu(event.globalPos())
+                return True
+        return super().eventFilter(watched, event)
 
     def fit_bubble(self, text):
         """气泡宽高随文字收缩，超过 3 行时用省略号截断。"""
@@ -154,6 +238,8 @@ class Pet(QWidget):
         return self.pixmap.size().scaled(165, 140, Qt.KeepAspectRatio)
 
     def paintEvent(self, event):
+        if self.mode == '3d':
+            return
         import math
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -181,28 +267,39 @@ class Pet(QWidget):
             self.play_action('hover')
         super().enterEvent(event)
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.offset = event.globalPos() - self.pos()
-            self.press_position = event.globalPos()
-            self.dragged = False
+    def press(self, pos):
+        self.offset = pos - self.pos()
+        self.press_position = pos
+        self.dragged = False
 
-    def mouseMoveEvent(self, event):
-        if self.offset is not None and event.buttons() & Qt.LeftButton:
-            if (event.globalPos() - self.press_position).manhattanLength() >= QApplication.startDragDistance():
+    def drag(self, pos, buttons):
+        if self.offset is not None and buttons & Qt.LeftButton:
+            if (pos - self.press_position).manhattanLength() >= QApplication.startDragDistance():
                 self.dragged = True
             if self.dragged:
-                self.move(event.globalPos() - self.offset)
+                self.move(pos - self.offset)
+
+    def release(self, pos):
+        if self.offset is None:
+            return
+        if self.dragged:
+            self.ensure_visible()
+            self.save_preferences()
+        else:
+            self.play_action('touch')
+            self.say('摸摸收到！双击我可以聊天，也可以一起整理待办。')
+        self.offset = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.press(event.globalPos())
+
+    def mouseMoveEvent(self, event):
+        self.drag(event.globalPos(), event.buttons())
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self.offset is not None:
-            if self.dragged:
-                self.ensure_visible()
-                self.save_preferences()
-            else:
-                self.play_action('touch')
-                self.say('摸摸收到！双击我可以聊天，也可以一起整理待办。')
-        self.offset = None
+        if event.button() == Qt.LeftButton:
+            self.release(event.globalPos())
 
     def ensure_visible(self, *args):
         screens = QApplication.screens()
@@ -220,6 +317,7 @@ class Pet(QWidget):
     def save_preferences(self):
         self.owner.settings['pet_position'] = [self.x(), self.y()]
         self.owner.settings['pet_paused'] = self.paused
+        self.owner.settings['pet_mode'] = self.mode
         try:
             self.owner.persist_settings()
         except OSError:
@@ -245,13 +343,18 @@ class Pet(QWidget):
     def mouseDoubleClickEvent(self, event):
         self.owner.show_main()
 
-    def contextMenuEvent(self, event):
+    def show_menu(self, pos):
         menu = QMenu(self)
         menu.addAction('打开聊天与待办', self.owner.show_main)
         menu.addAction('更换宠物图片', self.owner.choose_image)
-        menu.addAction('恢复动画' if self.paused else '暂停动画', self.toggle_animation)
+        menu.addAction('切回 2D 形象' if self.mode == '3d' else '切换到 3D 形象', self.toggle_3d)
+        if self.mode == '2d':
+            menu.addAction('恢复动画' if self.paused else '暂停动画', self.toggle_animation)
         menu.addAction('重置宠物位置', self.reset_position)
         menu.addAction('退出', self.owner.quit_app)
-        menu.exec_(event.globalPos())
+        menu.exec_(pos)
+
+    def contextMenuEvent(self, event):
+        self.show_menu(event.globalPos())
 
 
