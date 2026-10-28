@@ -1,7 +1,7 @@
 """Local desktop pet interaction and screen placement."""
 import time
 from PyQt5.QtCore import QEvent, Qt, QTimer, QSize, QRect
-from PyQt5.QtGui import QColor, QFontMetrics, QImage, QPainter, QPixmap
+from PyQt5.QtGui import QColor, QCursor, QFontMetrics, QImage, QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu
 from ..animations import load_sequences
 from ..motion import CANVAS_SIZE, SUBJECT_SIZE, SUBJECT_BOTTOM
@@ -64,6 +64,7 @@ class Pet(QWidget):
         self.mode = '2d'
         self.view3d = None
         self.view3d_failed = False
+        self.gaze = (0.0, 0.0)
         self.paused = owner.settings.get('pet_paused', False)
         self.pixmap = QPixmap()
         self.sequences = {}
@@ -88,6 +89,10 @@ class Pet(QWidget):
         if not self.paused:
             timer.start(40)
         self.timer = timer
+        # 3D 视线跟随：轮询全局鼠标，只在方向变化时通知页面。
+        self.gaze_timer = QTimer(self)
+        self.gaze_timer.setInterval(80)
+        self.gaze_timer.timeout.connect(self.update_gaze_3d)
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(screen.right() - 220, screen.bottom() - 240)
         position = owner.settings.get('pet_position')
@@ -171,12 +176,40 @@ class Pet(QWidget):
         if self.view3d is not None:
             flag = 'true' if self.paused else 'false'
             self.view3d.page().runJavaScript(f'window.pet3d && window.pet3d.setPaused({flag})')
+            if self.paused or self.mode != '3d':
+                self.gaze_timer.stop()
+            else:
+                self.gaze_timer.start()
+
+    def update_gaze_3d(self):
+        if self.view3d is None or self.mode != '3d':
+            return
+        cursor = QCursor.pos()
+        center = self.view3d.mapToGlobal(self.view3d.rect().center())
+        x = max(-1.0, min(1.0, (cursor.x() - center.x()) / max(1, self.view3d.width() / 2)))
+        y = max(-1.0, min(1.0, (center.y() - cursor.y()) / max(1, self.view3d.height() / 2)))
+        if abs(x - self.gaze[0]) < 0.02 and abs(y - self.gaze[1]) < 0.02:
+            return
+        self.gaze = (x, y)
+        self.view3d.page().runJavaScript(f'window.pet3d && window.pet3d.lookAt({x:.2f}, {y:.2f})')
+
+    def react_3d(self):
+        if self.view3d is not None and not self.paused:
+            self.view3d.page().runJavaScript('window.pet3d && window.pet3d.react()')
+
+    def set_3d_dragging(self, value):
+        if self.mode == '3d' and self.view3d is not None:
+            flag = 'true' if value else 'false'
+            self.view3d.page().runJavaScript(f'window.pet3d && window.pet3d.setDragging({flag})')
 
     def disable_3d(self, persist=True):
         if self.mode != '3d':
             return
         delta = WINDOW_3D.height() - WINDOW_2D.height()
+        self.gaze_timer.stop()
+        self.gaze = (0.0, 0.0)
         if self.view3d is not None:
+            self.view3d.page().runJavaScript('window.pet3d && window.pet3d.setDragging(false)')
             self.view3d.page().runJavaScript('window.pet3d && window.pet3d.setPaused(true)')
         self.view3d.hide()
         self.setFixedSize(WINDOW_2D)
@@ -283,8 +316,9 @@ class Pet(QWidget):
 
     def drag(self, pos, buttons):
         if self.offset is not None and buttons & Qt.LeftButton:
-            if (pos - self.press_position).manhattanLength() >= QApplication.startDragDistance():
+            if not self.dragged and (pos - self.press_position).manhattanLength() >= QApplication.startDragDistance():
                 self.dragged = True
+                self.set_3d_dragging(True)
             if self.dragged:
                 self.move(pos - self.offset)
 
@@ -292,10 +326,14 @@ class Pet(QWidget):
         if self.offset is None:
             return
         if self.dragged:
+            self.set_3d_dragging(False)
             self.ensure_visible()
             self.save_preferences()
         else:
-            self.play_action('touch')
+            if self.mode == '3d':
+                self.react_3d()
+            else:
+                self.play_action('touch')
             self.say('摸摸收到！双击我可以聊天，也可以一起整理待办。')
         self.offset = None
 

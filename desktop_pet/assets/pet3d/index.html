@@ -171,12 +171,15 @@
   // 眼睛
   const eyes = [];
   const shines = [];
+  const eyeBase = [];
+  const shineBase = [];
   [-1, 1].forEach(function (side) {
     const eye = ball(1, 32);
     eye.scale.set(0.09, 0.115, 0.055);
     eye.position.set(side * 0.19, 2.02, 0.42);
     eye.material = material(BLACK, { roughness: 0.2 });
     eyes.push(eye);
+    eyeBase.push(eye.position.clone());
     pet.add(eye);
 
     const shine = ball(1, 16);
@@ -184,6 +187,7 @@
     shine.position.set(side * 0.19 + 0.03, 2.06, 0.475);
     shine.material = new THREE.MeshBasicMaterial({ color: 0xffffff });
     shines.push(shine);
+    shineBase.push(shine.position.clone());
     pet.add(shine);
   });
 
@@ -266,25 +270,46 @@
   let elapsed = 0;
   let blinkUntil = 0;
   let nextBlink = 2.4;
+  let gazeX = 0;
+  let gazeY = 0;
+  let gazeTargetX = 0;
+  let gazeTargetY = 0;
+  let dragging = false;
+  let dragAmount = 0;
+  let reactUntil = 0;
+  const REACT_DURATION = 0.9;
 
   function animate() {
     const delta = Math.min(clock.getDelta(), 0.1);
     elapsed += delta;
+
+    // 点击反应：0.9 秒的小跳，同时甩尾、瞪眼。
+    const reactLeft = Math.max(0, reactUntil - elapsed);
+    const react = reactLeft > 0 ? Math.sin((1 - reactLeft / REACT_DURATION) * Math.PI) : 0;
 
     // 呼吸：卫衣轻微起伏，整只宠物随之上下浮动。
     const breath = Math.sin(elapsed * Math.PI * 2 / 3.6);
     hoodie.scale.set(0.5 * (1 + 0.012 * breath),
                      0.6 * (1 + 0.018 * breath),
                      0.4 * (1 + 0.012 * breath));
-    pet.position.y = 0.012 * breath;
+    // 被拖动时轻微离地并晃动，像被拎在手里。
+    dragAmount += ((dragging ? 1 : 0) - dragAmount) * Math.min(1, delta * 10);
+    pet.position.y = 0.012 * breath + 0.14 * react + 0.05 * dragAmount;
+    pet.rotation.z = 0.05 * dragAmount * Math.sin(elapsed * 8);
 
     const tailPhase = elapsed * Math.PI * 2 / 4.8;
-    tailPivot.rotation.y = 0.09 * Math.sin(tailPhase);
+    tailPivot.rotation.y = 0.09 * Math.sin(tailPhase) + 0.06 * react * Math.sin(elapsed * 16);
     tailPivot.rotation.z = 0.05 * Math.sin(tailPhase + 0.8);
 
     const balloonPhase = elapsed * Math.PI * 2 / 5.2;
     balloonPivot.rotation.z = 0.055 * Math.sin(balloonPhase);
     balloonPivot.rotation.x = 0.03 * Math.sin(balloonPhase + 0.5);
+
+    // 视线跟随：眼球与高光朝鼠标方向平移。
+    gazeX += (gazeTargetX - gazeX) * Math.min(1, delta * 9);
+    gazeY += (gazeTargetY - gazeY) * Math.min(1, delta * 9);
+    const gazeOffsetX = 0.045 * gazeX;
+    const gazeOffsetY = 0.03 * gazeY;
 
     if (elapsed >= nextBlink) {
       blinkUntil = elapsed + 0.13;
@@ -292,8 +317,17 @@
     }
     const closing = elapsed < blinkUntil ? Math.sin((blinkUntil - elapsed) / 0.13 * Math.PI) : 0;
     const openness = 1 - closing * 0.92;
-    eyes.forEach(function (eye) { eye.scale.y = 0.115 * openness; });
-    shines.forEach(function (shine) { shine.scale.y = 0.04 * openness; });
+    const widen = 1 + 0.18 * react + 0.1 * dragAmount;
+    eyes.forEach(function (eye, index) {
+      eye.scale.y = 0.115 * openness * widen;
+      eye.position.x = eyeBase[index].x + gazeOffsetX;
+      eye.position.y = eyeBase[index].y + gazeOffsetY;
+    });
+    shines.forEach(function (shine, index) {
+      shine.scale.y = 0.04 * openness;
+      shine.position.x = shineBase[index].x + gazeOffsetX;
+      shine.position.y = shineBase[index].y + gazeOffsetY;
+    });
 
     renderer.render(scene, camera);
   }
@@ -317,7 +351,19 @@
     renderer.render(scene, camera);
   }
 
-  window.pet3d = { setPaused: setPaused };
+  window.pet3d = {
+    setPaused: setPaused,
+    lookAt: function (x, y) {
+      gazeTargetX = Math.max(-1, Math.min(1, x || 0));
+      gazeTargetY = Math.max(-1, Math.min(1, y || 0));
+    },
+    react: function () {
+      reactUntil = elapsed + REACT_DURATION;
+    },
+    setDragging: function (value) {
+      dragging = !!value;
+    }
+  };
   window.addEventListener('resize', resize);
   resize();
   renderer.setAnimationLoop(animate);
