@@ -1,0 +1,19 @@
+Fox (glTF sample model)
+=======================
+
+Source: https://github.com/KhronosGroup/glTF-Sample-Models/tree/main/2.0/Fox
+File used: 2.0/Fox/glTF-Binary/Fox.glb (embedded as fox.glb.js, base64)
+
+License information (per the model README):
+
+CC0 1.0 - Low poly fox by PixelMannen
+https://creativecommons.org/publicdomain/zero/1.0/
+https://opengameart.org/content/fox-and-shiba
+
+CC-BY 4.0 - Rigging and animation by @tomkranis on Sketchfab
+https://creativecommons.org/licenses/by/4.0/
+https://sketchfab.com/models/371dea88d7e04a76af5763f2a36866bc
+
+glTF conversion by @AsoboStudio and @scurest.
+
+The model is redistributed here with attribution as required by CC-BY 4.0.

@@ -11,239 +11,33 @@
 </head>
 <body>
 <script src="three.min.js"></script>
+<script src="GLTFLoader.js"></script>
+<script src="fox.glb.js"></script>
 <script>
 (function () {
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
   renderer.setClearColor(0x000000, 0);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   document.body.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
-  camera.position.set(0, 1.4, 7.0);
-  camera.lookAt(0, 1.32, 0);
+  // 视野收窄、相机拉远：长身体的狐狸在走动转向时也不容易超出 220px 窗口。
+  const camera = new THREE.PerspectiveCamera(24, 1, 0.1, 50);
+  camera.position.set(0, 1.7, 10.0);
+  camera.lookAt(0, 1.15, 0);
 
-  const ORANGE = 0xf07a22;
-  const CREAM = 0xf8e4c6;
-  const DARK = 0x3d2b23;
-  const BLACK = 0x241a16;
-  const BLUE = 0x1f8fe8;
-  const BLUE_DARK = 0x1476c9;
-  const PINK = 0xf28b8b;
+  scene.add(new THREE.HemisphereLight(0xfff6ea, 0x6d5a4d, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 1.6);
+  key.position.set(3, 5.5, 6);
+  scene.add(key);
+  const fill = new THREE.DirectionalLight(0xffe2c6, 0.5);
+  fill.position.set(-4.5, 2.5, 3);
+  scene.add(fill);
 
-  const material = (color, extra) => new THREE.MeshStandardMaterial(
-    Object.assign({ color: color, roughness: 0.8, metalness: 0 }, extra || {}));
-
-  const pet = new THREE.Group();
-  scene.add(pet);
-
-  function ball(radius, segments) {
-    return new THREE.Mesh(new THREE.SphereGeometry(radius, segments || 40, segments || 40));
-  }
-
-  function capsule(radius, length) {
-    return new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 6, 20));
-  }
-
-  // 尾巴：橙色曲线加奶油色尾尖，绕根部摆动
-  const tailPivot = new THREE.Group();
-  tailPivot.position.set(-0.34, 0.72, -0.24);
-  pet.add(tailPivot);
-  const tailCurve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(-0.38, -0.12, -0.06),
-    new THREE.Vector3(-0.64, 0.1, 0.02),
-    new THREE.Vector3(-0.52, 0.36, 0.12)
-  ]);
-  const tail = new THREE.Mesh(new THREE.TubeGeometry(tailCurve, 32, 0.15, 12, false), material(ORANGE));
-  tailPivot.add(tail);
-  const tailTip = ball(0.19, 28);
-  tailTip.scale.set(1, 1.2, 1);
-  tailTip.position.set(-0.52, 0.36, 0.12);
-  tailTip.material = material(CREAM);
-  tailPivot.add(tailTip);
-
-  // 腿与脚掌
-  const legs = [];
-  [-1, 1].forEach(function (side) {
-    const leg = capsule(0.11, 0.24);
-    leg.position.set(side * 0.2, 0.3, 0.02);
-    leg.material = material(ORANGE);
-    pet.add(leg);
-
-    const paw = ball(0.14, 28);
-    paw.scale.set(0.95, 0.6, 1.25);
-    paw.position.set(side * 0.2, 0.09, 0.09);
-    paw.material = material(DARK);
-    pet.add(paw);
-
-    legs.push({
-      leg: leg,
-      paw: paw,
-      legBase: leg.position.clone(),
-      pawBase: paw.position.clone()
-    });
-  });
-
-  // 蓝色卫衣
-  const hoodie = ball(1, 48);
-  hoodie.scale.set(0.5, 0.6, 0.4);
-  hoodie.position.set(0, 0.93, 0);
-  hoodie.material = material(BLUE);
-  pet.add(hoodie);
-
-  const hood = ball(1, 36);
-  hood.scale.set(0.42, 0.26, 0.28);
-  hood.position.set(0, 1.55, -0.16);
-  hood.material = material(BLUE_DARK);
-  pet.add(hood);
-
-  const pocket = ball(1, 32);
-  pocket.scale.set(0.25, 0.13, 0.06);
-  pocket.position.set(0, 0.8, 0.37);
-  pocket.material = material(BLUE_DARK);
-  pet.add(pocket);
-
-  [-1, 1].forEach(function (side) {
-    const string = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 8), material(0xf7f4ee));
-    string.position.set(side * 0.08, 1.26, 0.4);
-    pet.add(string);
-
-    const bead = ball(0.03, 16);
-    bead.position.set(side * 0.08, 1.15, 0.4);
-    bead.material = material(0xf7f4ee);
-    pet.add(bead);
-  });
-
-  // 左臂自然下垂
-  const leftArm = capsule(0.11, 0.3);
-  leftArm.position.set(-0.52, 1.06, 0.05);
-  leftArm.rotation.z = -0.35;
-  leftArm.material = material(BLUE);
-  pet.add(leftArm);
-  const leftPaw = ball(0.115, 24);
-  leftPaw.position.set(-0.62, 0.82, 0.12);
-  leftPaw.material = material(DARK);
-  pet.add(leftPaw);
-
-  // 右臂举起牵气球
-  const rightArm = capsule(0.11, 0.34);
-  rightArm.position.set(0.55, 1.35, 0.06);
-  rightArm.rotation.z = -0.85;
-  rightArm.material = material(BLUE);
-  pet.add(rightArm);
-  const rightPaw = ball(0.115, 24);
-  rightPaw.position.set(0.77, 1.58, 0.12);
-  rightPaw.material = material(DARK);
-  pet.add(rightPaw);
-
-  // 头部
-  const head = ball(1, 48);
-  head.scale.set(0.54, 0.5, 0.47);
-  head.position.set(0, 1.98, 0);
-  head.material = material(ORANGE);
-  pet.add(head);
-
-  // 耳朵
-  [-1, 1].forEach(function (side) {
-    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.56, 3), material(ORANGE));
-    ear.position.set(side * 0.34, 2.48, -0.02);
-    ear.rotation.z = side * -0.2;
-    ear.rotation.y = Math.PI / 6;
-    pet.add(ear);
-
-    const inner = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.36, 3), material(CREAM));
-    inner.position.set(side * 0.34, 2.45, 0.05);
-    inner.rotation.z = side * -0.2;
-    inner.rotation.y = Math.PI / 6;
-    pet.add(inner);
-  });
-
-  // 奶油色脸颊与口鼻
-  [-1, 1].forEach(function (side) {
-    const cheek = ball(1, 32);
-    cheek.scale.set(0.26, 0.21, 0.16);
-    cheek.position.set(side * 0.17, 1.78, 0.36);
-    cheek.material = material(CREAM);
-    pet.add(cheek);
-  });
-  const chin = ball(1, 32);
-  chin.scale.set(0.2, 0.13, 0.12);
-  chin.position.set(0, 1.68, 0.4);
-  chin.material = material(CREAM);
-  pet.add(chin);
-
-  // 眼睛
-  const eyes = [];
-  const shines = [];
-  const eyeBase = [];
-  const shineBase = [];
-  [-1, 1].forEach(function (side) {
-    const eye = ball(1, 32);
-    eye.scale.set(0.09, 0.115, 0.055);
-    eye.position.set(side * 0.19, 2.02, 0.42);
-    eye.material = material(BLACK, { roughness: 0.2 });
-    eyes.push(eye);
-    eyeBase.push(eye.position.clone());
-    pet.add(eye);
-
-    const shine = ball(1, 16);
-    shine.scale.set(0.03, 0.04, 0.02);
-    shine.position.set(side * 0.19 + 0.03, 2.06, 0.475);
-    shine.material = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    shines.push(shine);
-    shineBase.push(shine.position.clone());
-    pet.add(shine);
-  });
-
-  // 鼻子、嘴与舌头
-  const nose = ball(1, 24);
-  nose.scale.set(0.06, 0.045, 0.045);
-  nose.position.set(0, 1.84, 0.55);
-  nose.material = material(BLACK, { roughness: 0.35 });
-  pet.add(nose);
-
-  const mouth = ball(1, 24);
-  mouth.scale.set(0.09, 0.055, 0.03);
-  mouth.position.set(0, 1.73, 0.53);
-  mouth.material = material(0x7a2f2a, { roughness: 0.5 });
-  pet.add(mouth);
-
-  const tongue = ball(1, 20);
-  tongue.scale.set(0.06, 0.035, 0.02);
-  tongue.position.set(0, 1.71, 0.555);
-  tongue.material = material(PINK, { roughness: 0.7 });
-  pet.add(tongue);
-
-  // 气球与绳子，绕右手轻轻晃动
-  const balloonPivot = new THREE.Group();
-  balloonPivot.position.set(0.77, 1.58, 0.12);
-  pet.add(balloonPivot);
-  const balloon = ball(1, 40);
-  balloon.scale.set(0.29, 0.33, 0.29);
-  balloon.position.set(0.23, 0.97, -0.07);
-  balloon.material = material(BLUE, { roughness: 0.55 });
-  balloonPivot.add(balloon);
-  const knot = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.09, 12), material(BLUE_DARK));
-  knot.position.set(0.23, 0.6, -0.07);
-  knot.rotation.x = Math.PI;
-  balloonPivot.add(knot);
-
-  const stringCurve = new THREE.QuadraticBezierCurve3(
-    new THREE.Vector3(0.01, 0.04, 0),
-    new THREE.Vector3(0.25, 0.37, -0.02),
-    new THREE.Vector3(0.23, 0.56, -0.07)
-  );
-  const string = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(stringCurve.getPoints(24)),
-    new THREE.LineBasicMaterial({ color: 0x8a837c })
-  );
-  balloonPivot.add(string);
-
-  // 柔和落地阴影
+  // 落地阴影固定在场景地面，宠物起跳时仍贴地。
   const shadowCanvas = document.createElement('canvas');
   shadowCanvas.width = 256;
   shadowCanvas.height = 128;
@@ -255,29 +49,32 @@
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 256, 128);
   const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.2, 0.7),
+    new THREE.PlaneGeometry(2.0, 1.0),
     new THREE.MeshBasicMaterial({
       map: new THREE.CanvasTexture(shadowCanvas),
       transparent: true,
       depthWrite: false
     })
   );
-  shadow.position.set(0, 0.02, -0.45);
-  shadow.renderOrder = -1;
-  pet.add(shadow);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.01;
+  shadow.renderOrder = 1;
+  shadow.visible = false;
+  scene.add(shadow);
 
-  scene.add(new THREE.HemisphereLight(0xfff6ea, 0x6d5a4d, 0.75));
-  const key = new THREE.DirectionalLight(0xffffff, 1.55);
-  key.position.set(3, 5.5, 6);
-  scene.add(key);
-  const fill = new THREE.DirectionalLight(0xffe2c6, 0.5);
-  fill.position.set(-4.5, 2.5, 3);
-  scene.add(fill);
+  const pet = new THREE.Group();
+  scene.add(pet);
 
   const clock = new THREE.Clock();
+  const gazeQuat = new THREE.Quaternion();
+  const gazeEuler = new THREE.Euler();
+  let mixer = null;
+  let actions = {};
+  let currentName = '';
+  let headBone = null;
+  let ready = false;
+  let paused = false;
   let elapsed = 0;
-  let blinkUntil = 0;
-  let nextBlink = 2.4;
   let gazeX = 0;
   let gazeY = 0;
   let gazeTargetX = 0;
@@ -285,93 +82,132 @@
   let dragging = false;
   let dragAmount = 0;
   let reactUntil = 0;
+  let runActive = false;
+  let runUntil = 0;
+  let runDuration = 1.2;
   let walking = false;
   let walkDir = 1;
-  let walkAmount = 0;
-  let walkYaw = 0;
   const REACT_DURATION = 0.9;
+  const REST_YAW = 0.35;
+  const WALK_YAW = 0.62;
+  let walkAmount = 0;
+  let walkYaw = REST_YAW;
+  pet.rotation.y = REST_YAW;
+
+  // file:// 下 fetch/XHR 会被拦截，模型以 base64 内嵌后直接解析。
+  const loader = new THREE.GLTFLoader();
+  const binary = atob(window.FOX_GLB_BASE64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+  loader.parse(bytes.buffer, '', function (gltf) {
+    const model = gltf.scene;
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const scale = 2.1 / size.y;
+    model.scale.setScalar(scale);
+    model.position.set(-(box.min.x + box.max.x) / 2 * scale,
+                       -box.min.y * scale,
+                       -(box.min.z + box.max.z) / 2 * scale);
+    pet.add(model);
+
+    model.traverse(function (node) {
+      if (node.isBone && !headBone && /head/i.test(node.name)) { headBone = node; }
+    });
+
+    mixer = new THREE.AnimationMixer(model);
+    gltf.animations.forEach(function (clip) {
+      const action = mixer.clipAction(clip);
+      if (clip.name === 'Run') {
+        action.setLoop(THREE.LoopOnce, 1);
+        action.clampWhenFinished = true;
+        runDuration = clip.duration;
+      }
+      actions[clip.name] = action;
+    });
+
+    ready = true;
+    shadow.visible = true;
+    playAction('Survey', 0);
+    if (paused) { renderer.render(scene, camera); }
+  }, function (error) {
+    console.error('狐狸模型加载失败', error);
+  });
+
+  function playAction(name, fade) {
+    const next = actions[name];
+    if (!next) { return; }
+    if (name === currentName) {
+      if (name === 'Run') { next.reset(); next.play(); }
+      return;
+    }
+    const prev = actions[currentName];
+    next.reset();
+    next.setEffectiveWeight(1);
+    next.play();
+    if (fade > 0) {
+      next.fadeIn(fade);
+      if (prev) { prev.fadeOut(fade); }
+    } else if (prev) {
+      prev.stop();
+    }
+    currentName = name;
+  }
+
+  function updateAction(fade) {
+    if (!ready || runActive) { return; }
+    playAction(walking ? 'Walk' : 'Survey', fade === undefined ? 0.2 : fade);
+  }
 
   function animate() {
     const delta = Math.min(clock.getDelta(), 0.1);
     elapsed += delta;
 
-    // 点击反应：0.9 秒的小跳，同时甩尾、瞪眼。
+    // Run 是一次性的点击反应；这里按时间兜底，进度暂停时也不会卡住。
+    if (runActive && elapsed >= runUntil) {
+      runActive = false;
+      updateAction(0.18);
+    }
+    if (mixer) { mixer.update(delta); }
+
+    // 视线：在动画写入骨骼姿态后叠加头部旋转，跟随鼠标方向。
+    gazeX += (gazeTargetX - gazeX) * Math.min(1, delta * 9);
+    gazeY += (gazeTargetY - gazeY) * Math.min(1, delta * 9);
+    if (headBone) {
+      headBone.quaternion.multiply(
+        gazeQuat.setFromEuler(gazeEuler.set(gazeY * 0.18, gazeX * 0.32, 0)));
+    }
+
+    // 点击反应：0.9 秒的小跳。
     const reactLeft = Math.max(0, reactUntil - elapsed);
     const react = reactLeft > 0 ? Math.sin((1 - reactLeft / REACT_DURATION) * Math.PI) : 0;
 
-    // 呼吸：卫衣轻微起伏，整只宠物随之上下浮动。
-    const breath = Math.sin(elapsed * Math.PI * 2 / 3.6);
-    hoodie.scale.set(0.5 * (1 + 0.012 * breath),
-                     0.6 * (1 + 0.018 * breath),
-                     0.4 * (1 + 0.012 * breath));
     // 被拖动时轻微离地并晃动，像被拎在手里。
     dragAmount += ((dragging ? 1 : 0) - dragAmount) * Math.min(1, delta * 10);
-    pet.position.y = 0.012 * breath + 0.14 * react + 0.05 * dragAmount;
-    pet.rotation.z = 0.05 * dragAmount * Math.sin(elapsed * 8);
 
-    // 巡逻走动：双腿交替迈步，身体随步频起伏并略微转向行进方向。
+    // 巡逻走动：身体随步频起伏并转向行进方向。
     walkAmount += ((walking ? 1 : 0) - walkAmount) * Math.min(1, delta * 8);
-    const walkPhase = elapsed * Math.PI * 2 * 1.8;
-    const step = Math.sin(walkPhase) * 0.06 * walkAmount;
-    legs.forEach(function (entry, index) {
-      const swing = index === 0 ? step : -step;
-      entry.leg.position.z = entry.legBase.z + swing;
-      entry.leg.position.y = entry.legBase.y + Math.abs(swing) * 0.3;
-      entry.paw.position.z = entry.pawBase.z + swing * 1.1;
-      entry.paw.position.y = entry.pawBase.y + Math.max(0, swing) * 0.6;
-    });
-    pet.position.y += 0.018 * walkAmount * Math.abs(Math.sin(walkPhase));
-    walkYaw += ((walking ? 0.35 * walkDir : 0) - walkYaw) * Math.min(1, delta * 8);
+    const walkPhase = elapsed * Math.PI * 2 / 0.71;
+    pet.position.y = 0.015 * walkAmount * Math.abs(Math.sin(walkPhase))
+      + 0.14 * react + 0.05 * dragAmount;
+    pet.rotation.z = 0.05 * dragAmount * Math.sin(elapsed * 8);
+    walkYaw += ((walking ? WALK_YAW * walkDir : REST_YAW) - walkYaw) * Math.min(1, delta * 8);
     pet.rotation.y = walkYaw;
 
-    const tailPhase = elapsed * Math.PI * 2 / 4.8;
-    tailPivot.rotation.y = 0.09 * Math.sin(tailPhase) + 0.06 * react * Math.sin(elapsed * 16)
-      + 0.03 * walkAmount * Math.sin(elapsed * 9);
-    tailPivot.rotation.z = 0.05 * Math.sin(tailPhase + 0.8);
-
-    const balloonPhase = elapsed * Math.PI * 2 / 5.2;
-    balloonPivot.rotation.z = 0.055 * Math.sin(balloonPhase);
-    balloonPivot.rotation.x = 0.03 * Math.sin(balloonPhase + 0.5);
-
-    // 视线跟随：眼球与高光朝鼠标方向平移。
-    gazeX += (gazeTargetX - gazeX) * Math.min(1, delta * 9);
-    gazeY += (gazeTargetY - gazeY) * Math.min(1, delta * 9);
-    const gazeOffsetX = 0.045 * gazeX;
-    const gazeOffsetY = 0.03 * gazeY;
-
-    if (elapsed >= nextBlink) {
-      blinkUntil = elapsed + 0.13;
-      nextBlink = elapsed + 2.6 + Math.random() * 2.8;
-    }
-    const closing = elapsed < blinkUntil ? Math.sin((blinkUntil - elapsed) / 0.13 * Math.PI) : 0;
-    const openness = 1 - closing * 0.92;
-    const widen = 1 + 0.18 * react + 0.1 * dragAmount;
-    eyes.forEach(function (eye, index) {
-      eye.scale.y = 0.115 * openness * widen;
-      eye.position.x = eyeBase[index].x + gazeOffsetX;
-      eye.position.y = eyeBase[index].y + gazeOffsetY;
-    });
-    shines.forEach(function (shine, index) {
-      shine.scale.y = 0.04 * openness;
-      shine.position.x = shineBase[index].x + gazeOffsetX;
-      shine.position.y = shineBase[index].y + gazeOffsetY;
-    });
+    shadow.material.opacity = 1 - 0.3 * react;
 
     renderer.render(scene, camera);
   }
 
   function resetWalkPose() {
     walkAmount = 0;
-    walkYaw = 0;
-    legs.forEach(function (entry) {
-      entry.leg.position.copy(entry.legBase);
-      entry.paw.position.copy(entry.pawBase);
-    });
-    pet.rotation.y = 0;
+    walkYaw = REST_YAW;
+    pet.rotation.y = REST_YAW;
   }
 
   function setPaused(value) {
-    if (value) {
+    paused = !!value;
+    if (paused) {
       resetWalkPose();
       renderer.setAnimationLoop(null);
       renderer.render(scene, camera);
@@ -397,7 +233,11 @@
       gazeTargetY = Math.max(-1, Math.min(1, y || 0));
     },
     react: function () {
+      if (!ready) { return; }
+      runActive = true;
       reactUntil = elapsed + REACT_DURATION;
+      runUntil = elapsed + Math.max(0.6, runDuration - 0.15);
+      playAction('Run', 0.12);
     },
     setDragging: function (value) {
       dragging = !!value;
@@ -405,6 +245,7 @@
     setWalking: function (value, direction) {
       walking = !!value;
       walkDir = direction < 0 ? -1 : 1;
+      updateAction(0.22);
     }
   };
   window.addEventListener('resize', resize);
