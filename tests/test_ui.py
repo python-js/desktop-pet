@@ -471,9 +471,11 @@ class UiSmokeTests(unittest.TestCase):
                     self.assertFalse(window.pet.enable_3d(persist=False))
                     self.assertEqual(window.pet.mode, '2d')
                     window.settings['pet_mode'] = '3d'
+                    window.settings['pet_walking'] = False
                     window.persist_settings()
                     saved = json.loads((Path(folder) / 'settings.json').read_text(encoding='utf-8'))
                     self.assertEqual(saved['pet_mode'], '3d')
+                    self.assertIs(saved['pet_walking'], False)
                 finally:
                     window.shutting_down = True
                     window.pet.close()

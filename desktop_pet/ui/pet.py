@@ -1,4 +1,5 @@
 """Local desktop pet interaction and screen placement."""
+import random
 import time
 from PyQt5.QtCore import QEvent, Qt, QTimer, QSize, QRect
 from PyQt5.QtGui import QColor, QCursor, QFontMetrics, QImage, QPainter, QPixmap
@@ -17,6 +18,13 @@ WINDOW_2D = QSize(220, 260)
 # 3D 模式在顶部预留气泡区，3D 画布从 y=88 开始，互不遮挡。
 WINDOW_3D = QSize(220, 340)
 VIEW3D_TOP = 88
+
+# 偶尔巡逻：静止一段时间后沿当前屏幕水平走几步，到边缘掉头。
+WALK_SPEED = 45
+WALK_MIN_MS = 3000
+WALK_MAX_MS = 6000
+WALK_IDLE_MIN_MS = 20000
+WALK_IDLE_MAX_MS = 40000
 
 
 def paint_default_pet(painter):
@@ -93,6 +101,17 @@ class Pet(QWidget):
         self.gaze_timer = QTimer(self)
         self.gaze_timer.setInterval(80)
         self.gaze_timer.timeout.connect(self.update_gaze_3d)
+        self.walking_enabled = owner.settings.get('pet_walking', True)
+        self.walking = False
+        self.walk_direction = 1
+        self.walk_until = 0.0
+        self.walk_last = 0.0
+        self.walk_timer = QTimer(self)
+        self.walk_timer.setInterval(40)
+        self.walk_timer.timeout.connect(self.walk_tick)
+        self.walk_idle_timer = QTimer(self)
+        self.walk_idle_timer.setSingleShot(True)
+        self.walk_idle_timer.timeout.connect(self.start_walk)
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(screen.right() - 220, screen.bottom() - 240)
         position = owner.settings.get('pet_position')
@@ -166,6 +185,7 @@ class Pet(QWidget):
         self.mode = '3d'
         self.timer.stop()
         self.apply_3d_pause()
+        self.schedule_walk()
         self.update()
         self.ensure_visible()
         if persist:
@@ -202,9 +222,83 @@ class Pet(QWidget):
             flag = 'true' if value else 'false'
             self.view3d.page().runJavaScript(f'window.pet3d && window.pet3d.setDragging({flag})')
 
+    def walk_bounds(self):
+        screen = QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
+        return screen.availableGeometry()
+
+    def schedule_walk(self, delay=None):
+        if not self.walking_enabled or self.paused or self.mode != '3d' or self.walking:
+            return
+        self.walk_idle_timer.start(delay or random.randint(WALK_IDLE_MIN_MS, WALK_IDLE_MAX_MS))
+
+    def start_walk(self):
+        if not self.walking_enabled or self.paused or self.mode != '3d' or self.walking:
+            return
+        if self.offset is not None or self.underMouse() or self.bubble.underMouse():
+            self.schedule_walk(5000)
+            return
+        bounds = self.walk_bounds()
+        if self.x() <= bounds.left() + 2:
+            self.walk_direction = 1
+        elif self.x() + self.width() >= bounds.right():
+            self.walk_direction = -1
+        self.walking = True
+        self.walk_last = time.monotonic()
+        self.walk_until = self.walk_last + random.randint(WALK_MIN_MS, WALK_MAX_MS) / 1000
+        self.walk_timer.start()
+        self.set_3d_walking(True, self.walk_direction)
+
+    def walk_tick(self):
+        now = time.monotonic()
+        delta = min(now - self.walk_last, 0.1)
+        self.walk_last = now
+        if now >= self.walk_until:
+            self.stop_walking()
+            return
+        bounds = self.walk_bounds()
+        x = self.x() + WALK_SPEED * delta * self.walk_direction
+        if x <= bounds.left():
+            x = bounds.left()
+            self.walk_direction = 1
+            self.set_3d_walking(True, 1)
+        elif x + self.width() >= bounds.right() + 1:
+            x = bounds.right() - self.width() + 1
+            self.walk_direction = -1
+            self.set_3d_walking(True, -1)
+        self.move(round(x), self.y())
+
+    def stop_walking(self, save=True):
+        was_walking = self.walking
+        self.walking = False
+        self.walk_timer.stop()
+        if was_walking:
+            self.set_3d_walking(False, 0)
+            if save:
+                self.save_preferences()
+        self.schedule_walk()
+
+    def set_3d_walking(self, value, direction):
+        if self.mode == '3d' and self.view3d is not None:
+            flag = 'true' if value else 'false'
+            self.view3d.page().runJavaScript(f'window.pet3d && window.pet3d.setWalking({flag}, {direction})')
+
+    def toggle_walking(self):
+        self.walking_enabled = not self.walking_enabled
+        self.walk_idle_timer.stop()
+        if not self.walking_enabled:
+            self.stop_walking(save=False)
+        else:
+            self.schedule_walk(1500)
+        self.save_preferences()
+
     def disable_3d(self, persist=True):
         if self.mode != '3d':
             return
+        self.walk_idle_timer.stop()
+        if self.walking:
+            self.walking = False
+            self.walk_timer.stop()
+            self.set_3d_walking(False, 0)
         delta = WINDOW_3D.height() - WINDOW_2D.height()
         self.gaze_timer.stop()
         self.gaze = (0.0, 0.0)
@@ -305,11 +399,14 @@ class Pet(QWidget):
             paint_default_pet(painter)
 
     def enterEvent(self, event):
+        if self.walking:
+            self.stop_walking(save=False)
         if not self.paused and not self.dragged and self.action == 'idle':
             self.play_action('hover')
         super().enterEvent(event)
 
     def press(self, pos):
+        self.stop_walking(save=False)
         self.offset = pos - self.pos()
         self.press_position = pos
         self.dragged = False
@@ -365,6 +462,7 @@ class Pet(QWidget):
         self.owner.settings['pet_position'] = [self.x(), self.y()]
         self.owner.settings['pet_paused'] = self.paused
         self.owner.settings['pet_mode'] = self.mode
+        self.owner.settings['pet_walking'] = self.walking_enabled
         try:
             self.owner.persist_settings()
         except OSError:
@@ -372,8 +470,11 @@ class Pet(QWidget):
 
     def toggle_animation(self):
         self.paused = not self.paused
+        if self.paused:
+            self.stop_walking(save=False)
         if self.mode == '3d':
             self.apply_3d_pause()
+            self.schedule_walk()
         elif self.paused:
             self.timer.stop()
         else:
@@ -382,6 +483,7 @@ class Pet(QWidget):
         self.save_preferences()
 
     def reset_position(self):
+        self.stop_walking(save=False)
         screen = QApplication.primaryScreen().availableGeometry()
         self.move(screen.right() - 220, screen.bottom() - 240)
         self.ensure_visible()
@@ -393,14 +495,18 @@ class Pet(QWidget):
         self.owner.show_main()
 
     def show_menu(self, pos):
+        self.stop_walking(save=False)
         menu = QMenu(self)
         menu.addAction('打开聊天与待办', self.owner.show_main)
         menu.addAction('更换宠物图片', self.owner.choose_image)
         menu.addAction('切回 2D 形象' if self.mode == '3d' else '切换到 3D 形象', self.toggle_3d)
         menu.addAction('恢复动画' if self.paused else '暂停动画', self.toggle_animation)
+        if self.mode == '3d':
+            menu.addAction('恢复走动' if not self.walking_enabled else '暂停走动', self.toggle_walking)
         menu.addAction('重置宠物位置', self.reset_position)
         menu.addAction('退出', self.owner.quit_app)
         menu.exec_(pos)
+        self.schedule_walk(5000)
 
     def contextMenuEvent(self, event):
         self.show_menu(event.globalPos())

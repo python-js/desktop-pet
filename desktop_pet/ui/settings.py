@@ -52,7 +52,7 @@ class SettingsPageMixin:
             loaded = json.loads((self.root / 'settings.json').read_text(encoding='utf-8'))
             if isinstance(loaded, dict):
                 self.settings = {k: loaded[k] for k in ('base_url', 'model', 'pet_image', 'pet_image_original', 'active_session') if isinstance(loaded.get(k), str)}
-                for key in ('stream', 'remember_key', 'pet_paused'):
+                for key in ('stream', 'remember_key', 'pet_paused', 'pet_walking'):
                     if isinstance(loaded.get(key), bool):
                         self.settings[key] = loaded[key]
                 if loaded.get('pet_mode') in ('2d', '3d'):
@@ -254,7 +254,7 @@ class SettingsPageMixin:
         settings = self.settings if settings is None else settings
         path = self.root / 'settings.json'
         temp = path.with_suffix('.tmp')
-        allowed = ('base_url', 'model', 'pet_image', 'pet_image_original', 'pet_images', 'active_session', 'stream', 'remember_key', 'pet_position', 'pet_paused', 'pet_animations', 'pet_animation_backup', 'pet_mode')
+        allowed = ('base_url', 'model', 'pet_image', 'pet_image_original', 'pet_images', 'active_session', 'stream', 'remember_key', 'pet_position', 'pet_paused', 'pet_walking', 'pet_animations', 'pet_animation_backup', 'pet_mode')
         temp.write_text(json.dumps({k: settings[k] for k in allowed if k in settings}, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(path)
 

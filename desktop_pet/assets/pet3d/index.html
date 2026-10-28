@@ -67,6 +67,7 @@
   tailPivot.add(tailTip);
 
   // 腿与脚掌
+  const legs = [];
   [-1, 1].forEach(function (side) {
     const leg = capsule(0.11, 0.24);
     leg.position.set(side * 0.2, 0.3, 0.02);
@@ -78,6 +79,13 @@
     paw.position.set(side * 0.2, 0.09, 0.09);
     paw.material = material(DARK);
     pet.add(paw);
+
+    legs.push({
+      leg: leg,
+      paw: paw,
+      legBase: leg.position.clone(),
+      pawBase: paw.position.clone()
+    });
   });
 
   // 蓝色卫衣
@@ -277,6 +285,10 @@
   let dragging = false;
   let dragAmount = 0;
   let reactUntil = 0;
+  let walking = false;
+  let walkDir = 1;
+  let walkAmount = 0;
+  let walkYaw = 0;
   const REACT_DURATION = 0.9;
 
   function animate() {
@@ -297,8 +309,24 @@
     pet.position.y = 0.012 * breath + 0.14 * react + 0.05 * dragAmount;
     pet.rotation.z = 0.05 * dragAmount * Math.sin(elapsed * 8);
 
+    // 巡逻走动：双腿交替迈步，身体随步频起伏并略微转向行进方向。
+    walkAmount += ((walking ? 1 : 0) - walkAmount) * Math.min(1, delta * 8);
+    const walkPhase = elapsed * Math.PI * 2 * 1.8;
+    const step = Math.sin(walkPhase) * 0.06 * walkAmount;
+    legs.forEach(function (entry, index) {
+      const swing = index === 0 ? step : -step;
+      entry.leg.position.z = entry.legBase.z + swing;
+      entry.leg.position.y = entry.legBase.y + Math.abs(swing) * 0.3;
+      entry.paw.position.z = entry.pawBase.z + swing * 1.1;
+      entry.paw.position.y = entry.pawBase.y + Math.max(0, swing) * 0.6;
+    });
+    pet.position.y += 0.018 * walkAmount * Math.abs(Math.sin(walkPhase));
+    walkYaw += ((walking ? 0.35 * walkDir : 0) - walkYaw) * Math.min(1, delta * 8);
+    pet.rotation.y = walkYaw;
+
     const tailPhase = elapsed * Math.PI * 2 / 4.8;
-    tailPivot.rotation.y = 0.09 * Math.sin(tailPhase) + 0.06 * react * Math.sin(elapsed * 16);
+    tailPivot.rotation.y = 0.09 * Math.sin(tailPhase) + 0.06 * react * Math.sin(elapsed * 16)
+      + 0.03 * walkAmount * Math.sin(elapsed * 9);
     tailPivot.rotation.z = 0.05 * Math.sin(tailPhase + 0.8);
 
     const balloonPhase = elapsed * Math.PI * 2 / 5.2;
@@ -332,8 +360,19 @@
     renderer.render(scene, camera);
   }
 
+  function resetWalkPose() {
+    walkAmount = 0;
+    walkYaw = 0;
+    legs.forEach(function (entry) {
+      entry.leg.position.copy(entry.legBase);
+      entry.paw.position.copy(entry.pawBase);
+    });
+    pet.rotation.y = 0;
+  }
+
   function setPaused(value) {
     if (value) {
+      resetWalkPose();
       renderer.setAnimationLoop(null);
       renderer.render(scene, camera);
     } else {
@@ -362,6 +401,10 @@
     },
     setDragging: function (value) {
       dragging = !!value;
+    },
+    setWalking: function (value, direction) {
+      walking = !!value;
+      walkDir = direction < 0 ? -1 : 1;
     }
   };
   window.addEventListener('resize', resize);
