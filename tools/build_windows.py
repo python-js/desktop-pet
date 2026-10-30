@@ -15,12 +15,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from desktop_pet.version import __version__
 
-RUNTIME_PACKAGES = ('PyQt5', 'PyQt5-Qt5', 'PyQt5-sip', 'PyQt-Fluent-Widgets', 'PyQt5-Frameless-Window', 'darkdetect')
+RUNTIME_PACKAGES = ('PyQt5', 'PyQt5-Qt5', 'PyQt5-sip', 'PyQtWebEngine', 'PyQtWebEngine-Qt5',
+                    'PyQt-Fluent-Widgets', 'PyQt5-Frameless-Window', 'darkdetect')
 
 
 def build_command(output, work):
     return [sys.executable, '-m', 'PyInstaller', '--name', 'DesktopPet', '--windowed',
-            '--onedir', '--clean', '--collect-all', 'qfluentwidgets', '--distpath', str(output), '--workpath', str(work / 'cache'),
+            '--onedir', '--clean', '--collect-all', 'qfluentwidgets',
+            '--add-data', f'{ROOT / "desktop_pet" / "assets"};desktop_pet/assets',
+            '--distpath', str(output), '--workpath', str(work / 'cache'),
             '--specpath', str(work), '--hidden-import', 'PyQt5.sip', str(ROOT / 'launch.py')]
 
 
@@ -68,6 +71,10 @@ def main():
     exe = application / 'DesktopPet.exe'
     if not exe.is_file():
         raise SystemExit('Build did not produce DesktopPet.exe; no verified release created.')
+    pet3d = application / '_internal' / 'desktop_pet' / 'assets' / 'pet3d'
+    for name in ('index.html', 'three.min.js', 'GLTFLoader.js', 'husky.glb.js'):
+        if not (pet3d / name).is_file():
+            raise SystemExit(f'3D assets missing from bundle ({name}); do not distribute this build.')
     report = output / 'smoke-test.json'
     subprocess.run([str(exe), '--smoke-test', str(report)], cwd=output, env=env,
                    check=True, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)

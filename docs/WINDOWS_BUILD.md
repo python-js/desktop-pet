@@ -1,8 +1,8 @@
 # Windows 构建与运行
 
-版本：0.14.0；日期：2026-10-27。
+版本：0.30.1；日期：2026-10-30。
 
-当前交付为构建脚本与打包兼容代码。受限环境未能安装 PyInstaller，尚未产出或验证真实 EXE。
+当前交付为构建脚本与打包兼容代码；本机已按此脚本产出构建，但受限环境尚未在未安装 Python/Qt 的干净机器上验收。
 
 ## 构建
 
@@ -15,13 +15,13 @@
 
 构建器固定使用 PyInstaller 6.16.0，使用当前虚拟环境中的运行依赖。每次写入新的带版本与时间戳目录，不覆盖旧发行目录。缺少依赖时直接报错，不自动安装或修改注册表。
 
-成功后 `dist/windows-0.14.0-时间戳/` 包含：
+成功后 `dist/windows-0.30.1-时间戳/` 包含：
 
-- `DesktopPet/DesktopPet.exe` 和 `_internal` 依赖目录；整个 DesktopPet 文件夹必须一起保留。
+- `DesktopPet/DesktopPet.exe` 和 `_internal` 依赖目录；整个 DesktopPet 文件夹必须一起保留。`_internal/desktop_pet/assets/pet3d/` 内含 three.js、GLTFLoader、哈士奇与狐狸模型（含许可证），3D 模式离线可用。
 - `DesktopPet/licenses/` 项目许可证、运行依赖许可证原文和依赖版本清单。
 - ZIP压缩包、文件SHA256清单 `manifest.json` 与打包程序自检结果 `smoke-test.json`。
 
-自检会运行新EXE的专用入口，检查Qt离屏插件、内存SQLite和基础动作生成。不访问真实配置、密钥或用户数据库。自检失败不会生成最终ZIP；仍可能留下中间构建目录。
+自检会运行新EXE的专用入口，检查Qt离屏插件、内存SQLite、基础动作生成与 3D 场景资产；构建器另外核对包内 `assets/pet3d` 文件齐全。不访问真实配置、密钥或用户数据库。自检失败不会生成最终ZIP；仍可能留下中间构建目录。
 
 ## 运行与数据
 

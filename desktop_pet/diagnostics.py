@@ -12,6 +12,7 @@ def packaged_smoke_test(report_path):
     from PyQt5.QtWidgets import QApplication
     from .core import TaskStore
     from .ui.pet import default_pet_image
+    from .ui.pet3d import SCENE
     from .ui.theme import apply_theme
     from .ui.controls import FLUENT_MODE
     app = QApplication.instance() or QApplication([])
@@ -22,6 +23,9 @@ def packaged_smoke_test(report_path):
         assert store.messages()[0]['content'] == 'packaging probe'
         image = default_pet_image()
         assert not image.isNull() and image.width() == 256
+        assert SCENE.is_file()
+        for name in ('three.min.js', 'GLTFLoader.js', 'husky.glb.js'):
+            assert (SCENE.parent / name).is_file(), name
         if FLUENT_MODE:
             from .app import MainWindow
             from .startup import StartupManager
@@ -53,6 +57,6 @@ def packaged_smoke_test(report_path):
         app.processEvents()
         Path(report_path).write_text(json.dumps({'ok': True, 'version': __version__,
                                                'ui_backend': 'fluent' if FLUENT_MODE else 'native',
-                                               'checks': ['qt-offscreen', 'sqlite', 'pet-image']}, indent=2), encoding='utf-8')
+                                               'checks': ['qt-offscreen', 'sqlite', 'pet-image', 'pet3d-assets']}, indent=2), encoding='utf-8')
     finally:
         store.close()
