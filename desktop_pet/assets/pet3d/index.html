@@ -68,11 +68,13 @@
 
   const clock = new THREE.Clock();
   const gazeQuat = new THREE.Quaternion();
+  const gazeParent = new THREE.Quaternion();
+  const gazeLocal = new THREE.Quaternion();
   const gazeEuler = new THREE.Euler();
   let mixer = null;
   let actions = {};
   let currentName = '';
-  let headBone = null;
+  let gazeBone = null;
   let ready = false;
   let paused = false;
   let elapsed = 0;
@@ -112,8 +114,11 @@
                        -(box.min.z + box.max.z) / 2 * scale);
     pet.add(model);
 
+    // 哈士奇的两只耳朵挂在 Neck3 下，转 Head 只会带动鼻子；优先转 Neck3 让整个头一起转。
     model.traverse(function (node) {
-      if (node.isBone && !headBone && /head/i.test(node.name)) { headBone = node; }
+      if (!node.isBone) { return; }
+      if (/neck3/i.test(node.name)) { gazeBone = node; }
+      else if (!gazeBone && /head/i.test(node.name)) { gazeBone = node; }
     });
 
     mixer = new THREE.AnimationMixer(model);
@@ -160,6 +165,14 @@
     playAction(walking ? 'Walk' : 'Idle', fade === undefined ? 0.2 : fade);
   }
 
+  // 骨骼局部轴与世界竖直轴不一致，用世界坐标的偏航/俯仰换算到父骨骼空间后叠加。
+  function applyGaze(bone, yaw, pitch) {
+    bone.parent.getWorldQuaternion(gazeParent);
+    gazeQuat.setFromEuler(gazeEuler.set(pitch, yaw, 0, 'YXZ'));
+    gazeLocal.copy(gazeParent).invert().multiply(gazeQuat).multiply(gazeParent);
+    bone.quaternion.premultiply(gazeLocal);
+  }
+
   function animate() {
     const delta = Math.min(clock.getDelta(), 0.1);
     elapsed += delta;
@@ -171,12 +184,11 @@
     }
     if (mixer) { mixer.update(delta); }
 
-    // 视线：在动画写入骨骼姿态后叠加头部旋转，跟随鼠标方向。
+    // 视线：在动画写入骨骼姿态后叠加旋转，让整个头（含耳朵）跟随鼠标方向。
     gazeX += (gazeTargetX - gazeX) * Math.min(1, delta * 9);
     gazeY += (gazeTargetY - gazeY) * Math.min(1, delta * 9);
-    if (headBone) {
-      headBone.quaternion.multiply(
-        gazeQuat.setFromEuler(gazeEuler.set(gazeY * 0.18, gazeX * 0.32, 0)));
+    if (gazeBone) {
+      applyGaze(gazeBone, gazeX * 0.32, -gazeY * 0.18);
     }
 
     // 点击反应：0.9 秒的小跳。

@@ -152,4 +152,4 @@ python -m unittest discover -s tests -v
 
 0.29：换成 Khronos glTF 示例狐狸。用 GLTFLoader 加载内嵌的 Fox.glb（base64，避开 file:// 读取限制），复用其 Survey、Walk、Run 三段骨骼动画：待机循环 Survey，走动循环 Walk，单击播放一次 Run 后回到当前状态；鼠标方向通过头部骨骼转向体现，拖拽仍轻微离地晃动。相机改为 24° 视场、距离 10，模型高 2.1 个单位，走动的侧转收敛到约 0.62 弧度，避免长身体在 220px 窗口内被裁切。模型由 PixelMannen（CC0）制作、@tomkranis 绑定与动画（CC-BY 4.0），署名见 `desktop_pet/assets/pet3d/FOX_LICENSE.txt`。
 
-0.30：狐狸换成 Quaternius 的哈士奇（CC0，来自 Poly Pizza）。GLB 内嵌为 `husky.glb.js`，复用其 Idle（待机循环）、Walk（走动循环）、Gallop_Jump（单击播放一次）三段动画；相机与交互不变，模型按高度缩放至 2.4 个单位，走动转向仍约 0.62 弧度。`fox.glb.js` 与 `FOX_LICENSE.txt` 保留作回退，署名见 `desktop_pet/assets/pet3d/HUSKY_LICENSE.txt`。
+0.30：狐狸换成 Quaternius 的哈士奇（CC0，来自 Poly Pizza）。GLB 内嵌为 `husky.glb.js`，复用其 Idle（待机循环）、Walk（走动循环）、Gallop_Jump（单击播放一次）三段动画；相机与交互不变，模型按高度缩放至 2.4 个单位，走动转向仍约 0.62 弧度。0.30.1 修正视线：哈士奇的耳朵挂在 Neck3 下，改转 Neck3 并用世界坐标的偏航/俯仰换算到父骨骼空间，整个头连同耳朵一起跟随鼠标，不再只有鼻子动。`fox.glb.js` 与 `FOX_LICENSE.txt` 保留作回退，署名见 `desktop_pet/assets/pet3d/HUSKY_LICENSE.txt`。
