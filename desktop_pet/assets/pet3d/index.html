@@ -12,7 +12,8 @@
 <body>
 <script src="three.min.js"></script>
 <script src="GLTFLoader.js"></script>
-<script src="fox.glb.js"></script>
+<!-- <script src="fox.glb.js"></script> -->
+<script src="husky.glb.js"></script>
 <script>
 (function () {
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
@@ -96,7 +97,7 @@
 
   // file:// 下 fetch/XHR 会被拦截，模型以 base64 内嵌后直接解析。
   const loader = new THREE.GLTFLoader();
-  const binary = atob(window.FOX_GLB_BASE64);
+  const binary = atob(window.HUSKY_GLB_BASE64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
   loader.parse(bytes.buffer, '', function (gltf) {
@@ -104,7 +105,7 @@
     const box = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3();
     box.getSize(size);
-    const scale = 2.1 / size.y;
+    const scale = 2.4 / size.y;
     model.scale.setScalar(scale);
     model.position.set(-(box.min.x + box.max.x) / 2 * scale,
                        -box.min.y * scale,
@@ -118,7 +119,7 @@
     mixer = new THREE.AnimationMixer(model);
     gltf.animations.forEach(function (clip) {
       const action = mixer.clipAction(clip);
-      if (clip.name === 'Run') {
+      if (clip.name === 'Gallop_Jump') {
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
         runDuration = clip.duration;
@@ -128,17 +129,17 @@
 
     ready = true;
     shadow.visible = true;
-    playAction('Survey', 0);
+    playAction('Idle', 0);
     if (paused) { renderer.render(scene, camera); }
   }, function (error) {
-    console.error('狐狸模型加载失败', error);
+    console.error('哈士奇模型加载失败', error);
   });
 
   function playAction(name, fade) {
     const next = actions[name];
     if (!next) { return; }
     if (name === currentName) {
-      if (name === 'Run') { next.reset(); next.play(); }
+      if (name === 'Gallop_Jump') { next.reset(); next.play(); }
       return;
     }
     const prev = actions[currentName];
@@ -156,14 +157,14 @@
 
   function updateAction(fade) {
     if (!ready || runActive) { return; }
-    playAction(walking ? 'Walk' : 'Survey', fade === undefined ? 0.2 : fade);
+    playAction(walking ? 'Walk' : 'Idle', fade === undefined ? 0.2 : fade);
   }
 
   function animate() {
     const delta = Math.min(clock.getDelta(), 0.1);
     elapsed += delta;
 
-    // Run 是一次性的点击反应；这里按时间兜底，进度暂停时也不会卡住。
+    // Gallop_Jump 是一次性的点击反应；这里按时间兜底，进度暂停时也不会卡住。
     if (runActive && elapsed >= runUntil) {
       runActive = false;
       updateAction(0.18);
@@ -187,7 +188,7 @@
 
     // 巡逻走动：身体随步频起伏并转向行进方向。
     walkAmount += ((walking ? 1 : 0) - walkAmount) * Math.min(1, delta * 8);
-    const walkPhase = elapsed * Math.PI * 2 / 0.71;
+    const walkPhase = elapsed * Math.PI * 2 / 1.042;
     pet.position.y = 0.015 * walkAmount * Math.abs(Math.sin(walkPhase))
       + 0.14 * react + 0.05 * dragAmount;
     pet.rotation.z = 0.05 * dragAmount * Math.sin(elapsed * 8);
@@ -237,7 +238,7 @@
       runActive = true;
       reactUntil = elapsed + REACT_DURATION;
       runUntil = elapsed + Math.max(0.6, runDuration - 0.15);
-      playAction('Run', 0.12);
+      playAction('Gallop_Jump', 0.12);
     },
     setDragging: function (value) {
       dragging = !!value;

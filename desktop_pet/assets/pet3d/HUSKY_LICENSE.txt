@@ -1,0 +1,12 @@
+Quaternius "Husky"
+==================
+
+Source: https://poly.pizza/m/wcWiuEqwzq
+Direct file: https://static.poly.pizza/611d25c7-430f-4bb5-ab2c-d8f5f3cb9712.glb (embedded as husky.glb.js, base64)
+Author: Quaternius (https://quaternius.com)
+Published: 2021-09-07
+
+License: Public Domain (CC0 1.0)
+https://creativecommons.org/publicdomain/zero/1.0/
+
+No attribution is required; it is included here for traceability.

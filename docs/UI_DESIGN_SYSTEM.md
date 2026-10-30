@@ -1,6 +1,6 @@
 # Desktop Pet 全局界面规范与实现
 
-版本0.29.0，2026-10-28。设置页“宠物形象”图库可切换默认/历史图片并去背景；桌宠默认显示内置 3D 狐狸（Khronos Fox 骨骼动画：Survey 待机、Walk 走动、Run 单击反应），头部跟随鼠标、拖拽晃动，并会偶尔沿屏幕水平巡逻，也保留原图 2D 模式并保留轻微上下浮动，气泡按内容自适应宽高，沿用暖奶油底色与珊瑚橙强调色；对话改为 Markdown 正文加末尾 tasks 任务块协议，助手消息原生渲染 Markdown，流式内容在历史占位消息中原地更新；新增按任务标记的钉钉群通知；对话支持修改、完成、删除待办，同标题多条时以序号列表二次确认；同一待办最多提醒3次，之后标记为延期并停止提醒；侧栏去掉“工作空间”小标题并放大导航项。
+版本0.30.0，2026-10-30。设置页“宠物形象”图库可切换默认/历史图片并去背景；桌宠默认显示内置 3D 哈士奇（Quaternius，骨骼动画：Idle 待机、Walk 走动、Gallop_Jump 单击反应），头部跟随鼠标、拖拽晃动，并会偶尔沿屏幕水平巡逻，也保留原图 2D 模式并保留轻微上下浮动，气泡按内容自适应宽高，沿用暖奶油底色与珊瑚橙强调色；对话改为 Markdown 正文加末尾 tasks 任务块协议，助手消息原生渲染 Markdown，流式内容在历史占位消息中原地更新；新增按任务标记的钉钉群通知；对话支持修改、完成、删除待办，同标题多条时以序号列表二次确认；同一待办最多提醒3次，之后标记为延期并停止提醒；侧栏去掉“工作空间”小标题并放大导航项。
 
 ## 1. 设计变量
 
@@ -114,11 +114,11 @@ ui/home.py的HomePageMixin复用现有TaskStore，不新增表结构。today_ove
 桌宠默认使用内置 3D 形象，2D 图片模式完整保留，可在右键菜单互相切换。
 
 - 窗口：2D 为220×260，3D 为220×340；3D 画布从 y=88 开始，顶部 84px 继续留给气泡，两者不重叠。切换时保持窗口底边不变（3D 顶边上移80px），并写入 pet_position 与 pet_mode。
-- 渲染：ui/pet3d.py 创建透明 QWebEngineView，加载 assets/pet3d/index.html；three.js r147（MIT）、GLTFLoader 与 Fox.glb 随程序打包，不访问网络。页面背景设为透明，窗口继续使用 FramelessWindowHint + WindowStaysOnTopHint + WA_TranslucentBackground。0.29 起场景为 Khronos glTF 示例狐狸：GLB 以 base64 内嵌为 fox.glb.js，经 GLTFLoader.parse 加载，避开 file:// 下 fetch/XHR 的 CORS 限制；相机 24° 视场、距离 10，模型按高度缩放至 2.1 个单位、脚底对齐 y=0，保留柔和三点光与落地阴影。模型署名见 FOX_LICENSE.txt（CC0 / CC-BY 4.0）。
+- 渲染：ui/pet3d.py 创建透明 QWebEngineView，加载 assets/pet3d/index.html；three.js r147（MIT）、GLTFLoader 与哈士奇 glb 随程序打包，不访问网络。页面背景设为透明，窗口继续使用 FramelessWindowHint + WindowStaysOnTopHint + WA_TranslucentBackground。0.30 起场景为 Quaternius 哈士奇（CC0）：GLB 以 base64 内嵌为 husky.glb.js，经 GLTFLoader.parse 加载，避开 file:// 下 fetch/XHR 的 CORS 限制；相机 24° 视场、距离 10，模型按高度缩放至 2.4 个单位、脚底对齐 y=0，保留柔和三点光与落地阴影。0.29 的 Khronos 狐狸（fox.glb.js）保留作回退。模型署名见 HUSKY_LICENSE.txt / FOX_LICENSE.txt。
 - 交互：WebEngine 内部渲染控件会直接接收鼠标，create_view 对其全部子控件安装事件过滤器，由 Pet 统一处理拖动、单击反馈、双击打开主窗与右键菜单；3D 模式下暂停 2D 动画定时器与动作帧。
 - 待机动画（0.26）：requestAnimationFrame 驱动呼吸（3.6秒周期，卫衣缩放约 ±1.2%/±1.8%，整只宠物上下浮动0.012）、随机眨眼（间隔2.6–5.4秒，闭合0.13秒，眼睛与高光同步压缩）、尾巴左右摆动（4.8秒）与气球绕右手轻摆（5.2秒，绕 X/Z 轴）。页面暴露 `window.pet3d.setPaused(bool)`：暂停时 `setAnimationLoop(null)` 并只渲染一帧，恢复时重置 Clock 后继续。（0.29 换成骨骼模型后，程序化模型与呼吸/眨眼/气球动作已移除，暂停接口保持不变。）
-- 骨骼动画（0.29）：AnimationMixer 管理 Survey（待机循环）、Walk（走动循环）、Run（LoopOnce）三段动画；切换用 fadeIn/fadeOut 交叉淡入。单击触发 Run，播放约一个片段时长后由时间兜底回到当前状态（走动中则回 Walk）。待机时模型朝向固定 0.35 弧度，走动时目标转为 ±0.62 弧度朝向行进方向，并叠加 0.015 的步频起伏；点击反应保留 0.9 秒小跳，拖拽时离地 0.05 并轻微倾斜。头部骨骼在 `mixer.update(delta)` 之后叠加约±0.32/±0.18 弧度的偏航与俯仰，跟随鼠标方向。
-- 鼠标互动（0.27）：Pet 以80ms轮询全局鼠标位置，换算为相对 3D 画布中心的归一化方向（阈值0.02避免频繁跨进程调用），调用 `window.pet3d.lookAt(x, y)`；页面把方向平滑插值后作用于头部骨骼。单击（未拖动）调用 `window.pet3d.react()`：播放 Run 并小跳。拖拽越过系统阈值时调用 `setDragging(true/false)`，页面让宠物轻微离地并左右晃动，松手回正。
+- 骨骼动画（0.30）：AnimationMixer 管理 Idle（待机循环，3.3 秒）、Walk（走动循环，1.04 秒）、Gallop_Jump（LoopOnce，0.92 秒）三段动画；切换用 fadeIn/fadeOut 交叉淡入。单击触发 Gallop_Jump，播放约一个片段时长后由时间兜底回到当前状态（走动中则回 Walk）。待机时模型朝向固定 0.35 弧度，走动时目标转为 ±0.62 弧度朝向行进方向，并叠加 0.015 的步频起伏（周期与该片段一致）；点击反应保留 0.9 秒小跳，拖拽时离地 0.05 并轻微倾斜。头部骨骼在 `mixer.update(delta)` 之后叠加约±0.32/±0.18 弧度的偏航与俯仰，跟随鼠标方向。
+- 鼠标互动（0.27）：Pet 以80ms轮询全局鼠标位置，换算为相对 3D 画布中心的归一化方向（阈值0.02避免频繁跨进程调用），调用 `window.pet3d.lookAt(x, y)`；页面把方向平滑插值后作用于头部骨骼。单击（未拖动）调用 `window.pet3d.react()`：播放 Gallop_Jump 并小跳。拖拽越过系统阈值时调用 `setDragging(true/false)`，页面让宠物轻微离地并左右晃动，松手回正。
 - 偶尔巡逻（0.28）：3D 模式下静止随机20–40秒后开始走动，时长随机3–6秒、速度45像素/秒，沿当前屏幕水平移动；到 availableGeometry 左右边缘立即掉头并继续走完剩余时长。窗口位置由40ms定时器按时间差推进，Walk 骨骼动画与小幅上下起伏配合，模型转向行进方向。鼠标移入、按下、暂停动画、切回2D或打开右键菜单时立即停止，脚下位置在停止时写入设置；右键“暂停走动/恢复走动”写入 pet_walking，下次启动恢复。
 - 暂停联动：右键“暂停动画/恢复动画”在两种模式都显示；3D 调用 setPaused，2D 启停定时器，状态统一写入 pet_paused。加载完成、启用 3D、切回 2D 时都会同步暂停状态，切回 2D 会先停掉 3D 渲染循环。暂停时同时停止视线轮询与走动，恢复后重新开始。
 - 回退：未安装 PyQtWebEngine、平台为 offscreen 或视图创建失败时自动保持 2D，不阻塞启动；状态栏给出提示。
@@ -155,7 +155,7 @@ Fluent滚动区域沿用细滚动轨与交互展开；保留原生控件的区�
 
 ## 6. 验证与维护
 
-本轮通过`QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`运行99项测试；新增“3D 模式在 offscreen 环境回退 2D 且 pet_mode 可持久化”回归；此前“3次提醒后延期且重置通知/延后不再触发”“编辑与恢复待办清零延期状态”“第3次提醒卡禁用延后并在待办页显示延期”等回归保持通过。3D 透明背景、原生鼠标拖动、2D/3D 往返切换使用 `.artifacts/capture_pet3d.py`、`test_pet3d_drag.py`、`test_pet3d_toggle.py` 在真实桌面验证；0.26 的待机动画与暂停静止使用 `test_pet3d_anim.py` 对比间隔1.2秒的连续截图（运行帧不同、暂停帧一致）；0.27 的视线、点击与拖拽使用 `test_pet3d_interact.py` 钩住页面接口：鼠标移到左右两侧分别收到 x=-1/1，单击触发一次 react，拖拽依次收到 true/false 且窗口移动，暂停后视线调用数不再增加；0.28 的巡逻使用 `test_pet3d_walk.py` 验证约 1 秒移动 48px、右边缘自动掉头、鼠标移入/暂停立即停止、开关写入 pet_walking；0.29 的狐狸模型使用 `test_pet3d_fox.py` 在真实桌面截图检查待机、左右视线、点击奔跑、巡逻、拖拽与暂停，并复查 `test_pet3d_interact.py` 的视线值为 x=-1/1、react 触发一次、拖拽 true/false、暂停后视线调用数不变，`test_pet3d_walk.py` 的移动、掉头与停止全部通过；走动转向时模型完整落在 220px 窗口内。视觉检查使用.artifacts/capture_warm_ui.py同时生成offscreen与Windows原生渲染截图，覆盖首页、聊天、下拉、待办、宠物图库设置、设置下半部、到期提醒与桌宠。
+本轮通过`QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`运行99项测试；新增“3D 模式在 offscreen 环境回退 2D 且 pet_mode 可持久化”回归；此前“3次提醒后延期且重置通知/延后不再触发”“编辑与恢复待办清零延期状态”“第3次提醒卡禁用延后并在待办页显示延期”等回归保持通过。3D 透明背景、原生鼠标拖动、2D/3D 往返切换使用 `.artifacts/capture_pet3d.py`、`test_pet3d_drag.py`、`test_pet3d_toggle.py` 在真实桌面验证；0.26 的待机动画与暂停静止使用 `test_pet3d_anim.py` 对比间隔1.2秒的连续截图（运行帧不同、暂停帧一致）；0.27 的视线、点击与拖拽使用 `test_pet3d_interact.py` 钩住页面接口：鼠标移到左右两侧分别收到 x=-1/1，单击触发一次 react，拖拽依次收到 true/false 且窗口移动，暂停后视线调用数不再增加；0.28 的巡逻使用 `test_pet3d_walk.py` 验证约 1 秒移动 48px、右边缘自动掉头、鼠标移入/暂停立即停止、开关写入 pet_walking；0.29 的狐狸模型使用 `test_pet3d_fox.py` 在真实桌面截图检查待机、左右视线、点击奔跑、巡逻、拖拽与暂停，并复查 `test_pet3d_interact.py` 的视线值为 x=-1/1、react 触发一次、拖拽 true/false、暂停后视线调用数不变，`test_pet3d_walk.py` 的移动、掉头与停止全部通过；走动转向时模型完整落在 220px 窗口内。0.30 换成哈士奇后沿用同一套脚本复测待机、注视、点击跳起、左右巡逻、拖拽与暂停，并按 220×252 画布导出页面 canvas 检查取景。视觉检查使用.artifacts/capture_warm_ui.py同时生成offscreen与Windows原生渲染截图，覆盖首页、聊天、下拉、待办、宠物图库设置、设置下半部、到期提醒与桌宠。
 
 运行unittest、tools/check_fluent.py及打包自检；检查长消息、连续URL、流式更新、会话切换、滚动位置、草稿确认与窗口销毁。高DPI与多显示器缩放仍需在真实桌面环境验收，尤其是提醒卡夹紧屏幕边缘和桌宠上方空间不足时的回退位置。
 
