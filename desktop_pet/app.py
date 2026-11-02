@@ -85,6 +85,7 @@ class AssistantWorker(QThread):
 class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
     dingtalk_result = pyqtSignal(bool, str)
     dingtalk_test = pyqtSignal(bool, str)
+    settings_test = pyqtSignal(bool, str)
 
     def __init__(self, secret_store=None, startup_manager=None):
         super().__init__()
@@ -111,6 +112,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         if QApplication.instance() is not None:
             apply_theme(QApplication.instance(), self.theme)
         self.dingtalk_result.connect(self.show_dingtalk_result)
+        self.settings_test.connect(self.on_settings_test)
         session_ids = {s['id'] for s in self.store.sessions()}
         self.active_session = self.settings.get('active_session', 'default')
         if self.active_session not in session_ids:
@@ -313,14 +315,21 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             self.apply_tasks_layout(event.size().width())
         if hasattr(self, 'chat_bar'):
             self.apply_chat_layout(event.size().width())
+        if hasattr(self, 'settings_canvas_layout'):
+            self.apply_settings_layout(event.size().width())
 
     def toggle_theme(self):
-        self.theme = 'dark' if self.theme == 'light' else 'light'
-        self.settings['theme'] = self.theme
-        try:
-            self.persist_settings()
-        except OSError:
-            self.statusBar().showMessage('主题设置暂时无法保存，本次运行仍然有效。', 6000)
+        self.set_theme('dark' if self.theme == 'light' else 'light')
+
+    def set_theme(self, theme, persist=True, notify=True):
+        theme = 'dark' if theme == 'dark' else 'light'
+        self.theme = theme
+        self.settings['theme'] = theme
+        if persist:
+            try:
+                self.persist_settings()
+            except OSError:
+                self.statusBar().showMessage('主题设置暂时无法保存，本次运行仍然有效。', 6000)
         apply_theme(QApplication.instance(), self.theme)
         self.theme_button.set_icon_name('sun' if self.theme == 'dark' else 'moon')
         self.win_mark.setPixmap(icons.pixmap('paw', tokens().brand, 14))
@@ -330,14 +339,19 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             button.refresh_theme()
         self.pet_tag.refresh_theme()
         self.live_badge.refresh_theme()
+        if hasattr(self, 'settings_theme_segment'):
+            self.settings_theme_segment.set_current(self.theme)
         if hasattr(self, 'home_hero'):
             self.refresh_home()
         if hasattr(self, 'task_segments'):
             self.refresh_tasks()
         if hasattr(self, 'chat_bar'):
             self.refresh_chat_theme()
-        self.statusBar().showMessage(
-            '已切换到夜幕主题' if self.theme == 'dark' else '已切换到纸白主题', 4000)
+        if hasattr(self, 'refresh_settings_theme'):
+            self.refresh_settings_theme()
+        if notify:
+            self.statusBar().showMessage(
+                '已切换到夜幕主题' if self.theme == 'dark' else '已切换到纸白主题', 4000)
 
     def refresh_pet_tag(self):
         if not hasattr(self, 'pet_tag'):
@@ -1130,6 +1144,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             self.pet.say('到时间了：' + task['title'])
             self.pet.play_action('reminder')
             notify(self.tray, '待办提醒', task['title'])
+            if self.settings.get('sound_enabled', True):
+                QApplication.beep()
             if task.get('dingtalk'):
                 self.push_dingtalk(task)
         self.check_early(now, current, quiet)

@@ -761,6 +761,8 @@ class TasksPageMixin:
             return
         self.settings['density'] = key
         self.task_density.set_current(key)
+        if hasattr(self, 'settings_density_segment'):
+            self.settings_density_segment.set_current(key)
         try:
             self.persist_settings()
         except OSError:

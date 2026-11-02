@@ -220,3 +220,15 @@ py -3 -m venv .venv
 - 错误与重试：`on_error()` 复用流式占位行，展示脱敏原因和“重试/用本地规则记下”；`AssistantWorker` 仅透传 `ValueError`，其余异常统一替换为“请求失败，请检查模型设置后重试。”，不回显原始响应。
 - 主题：`refresh_chat_theme()` 重设对话页/会话栏/输入区/草稿容器 QSS，并刷新历史、草稿卡、模型胶囊、重答按钮与右栏；`toggle_theme()` 与 `resizeEvent()` 均接入。`refresh_tasks()` 与 `refresh_sessions()` 末尾同步刷新右栏。
 - 113 项测试通过；新增 `test_chat_rail.py` 覆盖右栏 296/断点/展开收起、草稿确认写库与丢弃不写库、右栏静音与反馈、非 `ValueError` 错误脱敏。1440/1180/900 × 纸白/夜幕及 1180/900 右栏展开、流式/错误特写截图检查通过。
+
+## 0.31 P5：偏好设置
+
+- `ui/settings.py` 的 `build_settings()` 整体替换为 token 化 pcard/prow：`QScrollArea` 承载 760 宽居中内容，页边距 >1280 为 32、其余 20；`PrefRow` 宽屏为 `158px + 1fr`，<1080 折为单列并同步把宠物图库从 5 列收为 3 列。页头含标题、`StatePill('改动即时生效，无需重启','done','check')` 与“恢复默认”。
+- 六个分区按验收顺序：模型与对话（地址/模型/密码框 Key/记住密钥/逐字显示/保存/测试连接/状态）、提醒与免打扰（提前提点、提示音、自动顺延、免打扰时间 + 开关 + 状态胶囊、开机启动）、外观与密度（纸白/夜幕、宽松/紧凑）、数据与隐私（路径、打开文件夹、导出、清空）、宠物形象（历史图库、上传/移除/去背景/恢复原图、找回宠物）、钉钉群通知（Webhook/加签密码框、保存、发送测试）。
+- 新增 `PrefCard`/`PrefRow`/`PrefCheck`/`PrefSwitch`/`CheckLine`/`PrefIcon` 六个自绘控件；`CheckLine` 的 `setChecked()` 不触发信号，只有鼠标/空格/回车才 `toggled`，保证旧测试中程序化勾选不会立刻执行开机启动。按钮行统一左对齐并保留 `Line()` 分隔。
+- 即时保存：主题走统一的 `set_theme()`（同步分段控件、外壳图标与四页），密度走 `set_task_density()`（任务页与设置页双向同步）；提醒三开关、免打扰开关与时间变更直接 `persist_settings()`。新增真实 `sound_enabled`，到期通知后 `QApplication.beep()`，默认开启。
+- 恢复默认：二次确认后只重置主题、密度、三个提醒开关、免打扰开关与时段（22:30–07:30），并刷新首页/待办；密钥、钉钉、宠物图片与数据不动。`_SETTINGS_DEFAULTS` 为唯一默认值来源。
+- 连接测试：校验端点与模型后在线程中调用 `assistant.test_connection()`，成功显示“连接成功：模型，N 毫秒。”，失败只显示 `ValueError` 文案；状态文本不回显 Key，测试期间禁用按钮，完成后通过 `settings_test` 信号在主线程恢复。
+- 数据操作：导出默认文件名 `desktop-pet-export-YYYYMMDD.json`，只导出任务/事件/会话/消息/草稿，不含设置与密钥；打开数据目录用 `QDesktopServices.openUrl()`；清空数据两次确认，先 `store.backup()` 再清表，完成后重置为默认会话并显示备份文件名。
+- 旧 Fluent `build_settings()` 以 `_LEGACY_SETTINGS_030` 注释块保留在文件末尾备查；`app.py` 新增 `settings_test` 信号、`set_theme()` 统一入口与 `resizeEvent` 中的 `apply_settings_layout()`；`tasks.py` 的密度切换回写设置页分段控件。
+- 119 项测试通过；新增 `tests/test_settings_page.py` 6 项覆盖六卡标题/结论、1440/1180 两列与 900 单列、760 宽与零横向滚动、即时落盘、恢复默认保留密钥/钉钉、连接成功/失败/空字段与脱敏、导出不含密钥、打开目录、清空两次确认与 `.bak`、密码框模式与 Key 不写 JSON。1440/1180/900 × 纸白/夜幕及底部特写截图检查通过。
