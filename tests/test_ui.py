@@ -437,7 +437,10 @@ class UiSmokeTests(unittest.TestCase):
                     self.assertEqual((window.home_rhythm.ring.done, window.home_rhythm.ring.total), (0, 1))
 
                     window.settings['density'] = 'compact'
+                    old_row = window.home_row_widgets[0]
                     window.refresh_home()
+                    # 旧控件先隐藏再延迟销毁，切页刷新时不会和新行同屏闪烁。
+                    self.assertTrue(old_row.isHidden())
                     self.assertEqual(window.home_row_widgets[0].height(), 44)
                     row = window.home_row_widgets[0]
                     row.setFocus()

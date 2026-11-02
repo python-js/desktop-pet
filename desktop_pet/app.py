@@ -35,7 +35,7 @@ from .ui import icons, tokens as T
 from .ui.components import IconButton, LiveBadge, NavButton
 from .ui.pet_tag import PetTag
 from .ui.theme import apply_theme, application_icon, tokens
-from .ui.chat_widgets import CenteredHost, ComposerCard, MessageHistory, ModelChip
+from .ui.chat_widgets import ComposerCard, MessageHistory, ModelChip
 from qfluentwidgets import PrimaryPushButton, TransparentPushButton, FluentIcon
 from .ui.controls import ComboBox as QComboBox, TextEdit as QTextEdit
 
@@ -330,25 +330,31 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
                 self.persist_settings()
             except OSError:
                 self.statusBar().showMessage('主题设置暂时无法保存，本次运行仍然有效。', 6000)
-        apply_theme(QApplication.instance(), self.theme)
-        self.theme_button.set_icon_name('sun' if self.theme == 'dark' else 'moon')
-        self.win_mark.setPixmap(icons.pixmap('paw', tokens().brand, 14))
-        self.logo.setPixmap(application_icon().pixmap(30, 30))
-        self.compact_logo.setPixmap(application_icon().pixmap(30, 30))
-        for button in self.nav_buttons:
-            button.refresh_theme()
-        self.pet_tag.refresh_theme()
-        self.live_badge.refresh_theme()
-        if hasattr(self, 'settings_theme_segment'):
-            self.settings_theme_segment.set_current(self.theme)
-        if hasattr(self, 'home_hero'):
-            self.refresh_home()
-        if hasattr(self, 'task_segments'):
-            self.refresh_tasks()
-        if hasattr(self, 'chat_bar'):
-            self.refresh_chat_theme()
-        if hasattr(self, 'refresh_settings_theme'):
-            self.refresh_settings_theme()
+        # 整套令牌重建会让所有子控件重新 polish；先冻结绘制，避免逐块刷新造成闪烁。
+        self.setUpdatesEnabled(False)
+        try:
+            apply_theme(QApplication.instance(), self.theme)
+            self.theme_button.set_icon_name('sun' if self.theme == 'dark' else 'moon')
+            self.win_mark.setPixmap(icons.pixmap('paw', tokens().brand, 14))
+            self.logo.setPixmap(application_icon().pixmap(30, 30))
+            self.compact_logo.setPixmap(application_icon().pixmap(30, 30))
+            for button in self.nav_buttons:
+                button.refresh_theme()
+            self.pet_tag.refresh_theme()
+            self.live_badge.refresh_theme()
+            if hasattr(self, 'settings_theme_segment'):
+                self.settings_theme_segment.set_current(self.theme)
+            if hasattr(self, 'home_hero'):
+                self.refresh_home()
+            if hasattr(self, 'task_segments'):
+                self.refresh_tasks()
+            if hasattr(self, 'chat_bar'):
+                self.refresh_chat_theme()
+            if hasattr(self, 'refresh_settings_theme'):
+                self.refresh_settings_theme()
+        finally:
+            self.setUpdatesEnabled(True)
+            self.update()
         if notify:
             self.statusBar().showMessage(
                 '已切换到夜幕主题' if self.theme == 'dark' else '已切换到纸白主题', 4000)
@@ -451,7 +457,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.drafts.setContentsMargins(0, 0, 0, 0)
         self.drafts.setSpacing(8)
         self.draft_area.setWidget(self.draft_widget)
-        draft_row.addWidget(CenteredHost(self.draft_area))
+        draft_row.addWidget(self.draft_area)
         self.draft_holder.hide()
         column.addWidget(self.draft_holder)
 
@@ -460,7 +466,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         composer_row.setContentsMargins(32, 8, 32, 20)
         composer_row.setSpacing(0)
         self.composer = ComposerCard()
-        composer_row.addWidget(CenteredHost(self.composer))
+        composer_row.addWidget(self.composer)
 
         inside = QVBoxLayout(self.composer)
         inside.setContentsMargins(14, 10, 14, 10)
@@ -537,6 +543,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.chat_bar_layout.setContentsMargins(pad, 10, pad, 10)
         self.composer_holder.layout().setContentsMargins(pad, 8, pad, 20)
         self.draft_holder.layout().setContentsMargins(pad, 0, pad, 8)
+        if hasattr(self, 'history'):
+            self.history.set_gutter(pad)
         self.chat_eyebrow.setVisible(not compact)
         self.plan_button.setVisible(not compact)
         self.chat_hint.setVisible(not compact)

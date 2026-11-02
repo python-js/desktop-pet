@@ -241,3 +241,11 @@ py -3 -m venv .venv
 - `ui/theme.py`：新增对话框标题/说明/字段/提示卡/规划预览/提醒卡/提醒操作/QSlider 的 token QSS；`QSlider` 使用 4px 轨道、品牌色进度与 14px 圆形滑块，焦点状态可见。
 - `app.py`：`plan_today()` 改用 `PlanDialog`，接受/取消行为与快照提交顺序不变；移除不再使用的 `QTextBrowser` 导入。
 - 测试：新增 `tests/test_dialogs.py` 6 项，覆盖待办字段与标题对象名、规划预览与按钮文案、最终提醒禁用延后/提示转延期/屏幕夹紧、普通提醒仍可延后、去背景棋盘随主题变色与弹窗尺寸。全量 125 项通过。
+
+## 0.31 P6 后续：对话页可读性与全宽（2026-11-02）
+
+- 线程与输入列移除 720 限宽和 `CenteredHost`：`MessageHistory` 新增 `set_gutter()`，与 `apply_chat_layout()` 的 32/20 页边距同步；输入卡、草稿区直接铺满对话列。P4 的 720 居中方案仅保留在历史记录中备查。
+- 消息宽度：助手气泡占满线程剩余宽度；用户气泡按纯文本自然宽度收窄（`MessageText.natural_width()` 取最长行），长文仍受 `BUBBLE_MAX=560` 约束，窗口变窄时在 `MessageRow.resizeEvent` 重新计算。
+- 系统回执：`EventPill` 改为 22px、`surface_2` 底 + `border` 描边、`ink_2` 正文与 `ink_3` 勾选，不再使用苔绿文字；`display_text()` 先把换行压平成单行再省略，避免 `QRect` 版 `drawText` 画成多行叠字。
+- 闪烁：`refresh_home()` 与宠物图库重建时旧控件先 `hide()` 再 `deleteLater()`，避免延迟销毁期间与新控件同屏；`set_theme()` 期间冻结窗口绘制，主题重建完成后一次性 `update()`。
+- 测试：新增系统回执换行、用户气泡收窄与助手全宽、首页旧行先隐藏 3 项断言；全量 127 项通过。

@@ -229,3 +229,12 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 - 截图证据：`.artifacts/p6-shots/p6-{task,plan,cutout,reminder}-{light,dark}-{1,1.25,1.5}x.png` 共 24 张，生成脚本 `.artifacts/capture_p6_dialogs.py`（临时数据目录、合成图片与示例端点，无真实密钥）。逐张检查：眉标/标题/说明层级正确；待办时间与重复双列不截断；规划预览与底部说明不裁切；去背景双预览棋盘随主题变色、按钮右对齐；提醒卡最终提醒胶囊、逾期胶囊与“10 分钟后”禁用态清晰；暗色下卡片、提示卡、按钮与文字对比正常。
 - 修复清单：① 提醒卡主体、关闭与“打开待办”原本为固定 0.30 暖色内联样式，改用 `reminderCard`/`reminderClose`/`reminderLink` QSS 对象名，关闭与打开改用 `QToolButton` 规避 Fluent 按钮样式覆盖；② `TaskDialog` 固定 470 高导致底部留白偏多，收为 `sizeHint` 高度 441；③ `ImagePreview` 棋盘原为 `#dddddd/#ffffff` 硬编码，改为绘制时读取 token 并加 12px 圆角与描边；④ 提醒卡“打开待办”去掉旧 `QPushButton` 透明样式，焦点边框由 `QToolButton#reminderLink:focus` 统一提供。
 - 收尾：`docs/UI_DESIGN_SYSTEM.md` 的 P6 复选框、阶段表与进度行已置为完成；`docs/IMPLEMENTATION.md` 与 `docs/DESIGN.md` 增加本阶段说明。四页与弹窗在同一主题下使用同一 token 源，P0–P6 视觉重构收口。
+
+## 0.31 P6 后续：对话页可读性与全宽（2026-11-02）
+
+- 127 项测试通过（`QT_QPA_PLATFORM=offscreen PYTHONPATH=tests .venv/Scripts/python.exe -m unittest discover -s tests -q`）。新增覆盖：带换行的系统回执 `display_text()` 不含换行；900 宽线程下用户气泡 <200px 且助手气泡 >700px；首页刷新后旧行在 `deleteLater()` 前已隐藏。
+- 宽度实测（离屏 `QTest`，gutter=20，视口 900）：线程行宽 836；用户“今日金价查询”气泡 113px、“18.08分，提醒我喝水”161px；助手回复气泡铺满 782px；系统回执压平后单行显示。
+- 主窗口实测：1180×820 收起右栏时输入卡 1072、线程 1112；1440×820 右栏常驻时输入卡 848、线程 912，均与 `apply_chat_layout()` 的页边距一致，无 720 居中留白。
+- 闪烁修复：首页安排行与工作日志卡在移除时先 `hide()` 再 `deleteLater()`；`set_theme()` 用 `setUpdatesEnabled(False/True)` 合并整套 token 重建的绘制；设置页宠物图库同样先隐藏。
+- 截图证据：`.artifacts/chat-fix-{light,dark}-{1180,1440}.png`，生成脚本 `.artifacts/chat_fix_shots.py`（临时数据目录）。逐张检查：线程与输入卡同宽铺满；助手气泡全宽、用户气泡贴合文字；系统回执为中性灰底深色文字，单行不叠字；暗色下回执、气泡、输入卡与右栏对比正常。
+- 历史说明：P4 的 720 居中线程/输入列与 `CenteredHost` 已由本轮全宽方案取代，P4 记录仅作回退参考。

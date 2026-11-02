@@ -717,6 +717,7 @@ class HomePageMixin:
         self.home_count.setText(f'{len(data["schedule"])} 项' if data['schedule'] else '')
         for row in self.home_row_widgets:
             self.home_rows.removeWidget(row)
+            row.hide()
             row.deleteLater()
         self.home_row_widgets = []
         self.home_rows.removeWidget(self.home_empty_panel)
@@ -751,6 +752,7 @@ class HomePageMixin:
 
         for card in self.home_log_cards:
             self.home_log_grid.removeWidget(card)
+            card.hide()
             card.deleteLater()
         self.home_log_cards = []
         self.home_log_grid.removeWidget(self.home_log_empty)

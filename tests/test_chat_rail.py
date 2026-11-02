@@ -97,6 +97,33 @@ class ChatRailTests(unittest.TestCase):
             worker.run()
         self.assertEqual(messages, ['请求失败，请检查模型设置后重试。'])
 
+    def test_receipt_with_newline_stays_single_line(self):
+        from desktop_pet.ui.chat_widgets import EventPill
+        pill = EventPill('已保存：打开电脑，提醒时间 09:00。\n已保存：喝水，提醒时间 18:08。')
+        pill.resize(520, 22)
+        text = pill.display_text()
+        self.assertNotIn('\n', text)
+        self.assertIn('已保存', text)
+
+    def test_user_bubble_hugs_content_while_assistant_fills_thread(self):
+        from PyQt5.QtTest import QTest
+        from desktop_pet.ui.chat_widgets import MessageHistory
+        history = MessageHistory()
+        history.set_gutter(20)
+        history.resize(900, 480)
+        history.show()
+        history.append_message('user', '今日金价查询')
+        history.append_message('assistant', '这是回复。')
+        QTest.qWait(80)
+        user, assistant = history._rows
+        self.assertEqual(history.rows.contentsMargins().left(), 20)
+        self.assertGreater(history._rows[0].width(), 820)
+        self.assertLess(user.bubble.width(), 200)
+        self.assertGreater(assistant.bubble.width(), 700)
+        self.assertLess(user.bubble.width(), assistant.bubble.width())
+        history.close()
+        history.deleteLater()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -12,27 +12,7 @@ from . import icons
 from . import tokens as T
 from .theme import mono_font, tokens
 
-THREAD_MAX = 720
 BUBBLE_MAX = 560
-
-
-class CenteredHost(QWidget):
-    """让单个子控件居中并限制最大宽度，窗口变窄时自动收缩。"""
-
-    def __init__(self, child, max_width=THREAD_MAX, parent=None):
-        super().__init__(parent)
-        self.child = child
-        self.max_width = max_width
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(0)
-        row.addStretch(1)
-        row.addWidget(child, 0)
-        row.addStretch(1)
-
-    def resizeEvent(self, event):
-        self.child.setFixedWidth(min(self.max_width, max(0, event.size().width())))
-        super().resizeEvent(event)
 
 
 class Rule(QFrame):
@@ -86,40 +66,44 @@ class Bubble(QFrame):
 
 
 class EventPill(QWidget):
-    """系统回执：苔绿胶囊 + 勾选图标，长文按可用宽度省略。"""
+    """系统回执：中性胶囊 + 勾选图标，长文按可用宽度省略。"""
 
     def __init__(self, text='', parent=None):
         super().__init__(parent)
         self.text = text
-        self.setFixedHeight(21)
+        self.setFixedHeight(22)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 
     def _font(self):
         font = QFont(T.FONT_UI)
-        font.setPixelSize(10)
+        font.setPixelSize(11)
         font.setWeight(QFont.DemiBold)
         return font
 
+    def display_text(self):
+        # 回执可能带换行；QRect 版 drawText 会把换行画成多行，先压平成单行再省略。
+        flat = ' '.join(self.text.split())
+        return QFontMetrics(self._font()).elidedText(flat, Qt.ElideRight, max(0, self.width() - 32))
+
     def sizeHint(self):
-        width = QFontMetrics(self._font()).horizontalAdvance(self.text) + 38
-        return QSize(min(540, width), 21)
+        width = QFontMetrics(self._font()).horizontalAdvance(' '.join(self.text.split())) + 38
+        return QSize(min(540, width), 22)
 
     def minimumSizeHint(self):
-        return QSize(40, 21)
+        return QSize(40, 22)
 
     def paintEvent(self, event):
         t = tokens()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         rect = self.rect().adjusted(0, 0, -1, -1)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(t.calm_wash))
-        painter.drawRoundedRect(rect, 10.5, 10.5)
-        painter.drawPixmap(9, 5, icons.pixmap('check', t.calm, 11))
+        painter.setPen(QPen(QColor(t.border), 1))
+        painter.setBrush(QColor(t.surface_2))
+        painter.drawRoundedRect(rect, 11, 11)
+        painter.drawPixmap(9, 5, icons.pixmap('check', t.ink_3, 11))
         painter.setFont(self._font())
-        painter.setPen(QColor(t.calm))
-        text = QFontMetrics(self._font()).elidedText(self.text, Qt.ElideRight, max(0, self.width() - 32))
-        painter.drawText(rect.adjusted(24, 0, -6, 0), Qt.AlignLeft | Qt.AlignVCenter, text)
+        painter.setPen(QColor(t.ink_2))
+        painter.drawText(rect.adjusted(24, 0, -8, 0), Qt.AlignLeft | Qt.AlignVCenter, self.display_text())
 
 
 class MessageText(QTextBrowser):
@@ -167,6 +151,13 @@ class MessageText(QTextBrowser):
             self.setPlainText(text)
             return
         self.fit_height()
+
+    def natural_width(self):
+        font = QFont(T.FONT_UI)
+        font.setPixelSize(13)
+        metrics = QFontMetrics(font)
+        lines = (self.toPlainText() or '').splitlines() or ['']
+        return max(24, max(metrics.horizontalAdvance(line) for line in lines) + 5)
 
     def fit_height(self, *args):
         # QTextDocument emits during resize; defer geometry changes to avoid reentry.
@@ -220,8 +211,7 @@ class MessageRow(QWidget):
             layout.addWidget(self.avatar, 0, Qt.AlignTop)
         else:
             layout.addWidget(self.avatar, 0, Qt.AlignTop)
-            layout.addWidget(self.bubble, 0)
-            layout.addStretch(1)
+            layout.addWidget(self.bubble, 1)
         self.set_content(self._content, self.role == 'assistant')
 
     def set_content(self, content, markdown=False):
@@ -236,6 +226,16 @@ class MessageRow(QWidget):
             self.text.setMarkdown(self._content)
         else:
             self.text.setPlainText(self._content)
+        self._sync_width()
+
+    def _sync_width(self):
+        if not self.user:
+            return
+        available = max(180, self.width() - 54)
+        text_limit = max(60, min(BUBBLE_MAX, available) - 30)
+        width = min(self.text.natural_width(), text_limit)
+        if self.text.width() != width:
+            self.text.setFixedWidth(width)
 
     def set_meta(self, text):
         if self.meta is None:
@@ -326,7 +326,7 @@ class MessageRow(QWidget):
         if self.system:
             self.pill.setMaximumWidth(max(140, self.width() - 72))
             return
-        self.bubble.setMaximumWidth(max(180, min(BUBBLE_MAX, int(self.width() * .78))))
+        self._sync_width()
 
 
 class MessageHistory(SmoothScrollArea):
@@ -339,7 +339,8 @@ class MessageHistory(SmoothScrollArea):
         self.content = QWidget()
         self.content.setStyleSheet('background:transparent;')
         self.rows = QVBoxLayout(self.content)
-        self.rows.setContentsMargins(8, 8, 12, 12)
+        self.gutter = 32
+        self.rows.setContentsMargins(self.gutter, 8, self.gutter, 12)
         self.rows.setSpacing(0)
         self.rows.addStretch()
         self.setWidget(self.content)
@@ -444,13 +445,11 @@ class MessageHistory(SmoothScrollArea):
         for rule in self.content.findChildren(Rule):
             rule.update()
 
-    def _apply_width(self):
-        margin = max(8, (self.viewport().width() - THREAD_MAX) // 2)
-        self.rows.setContentsMargins(margin, 8, margin + 4, 12)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._apply_width()
+    def set_gutter(self, gutter):
+        gutter = max(8, int(gutter))
+        if gutter != self.gutter:
+            self.gutter = gutter
+            self.rows.setContentsMargins(self.gutter, 8, self.gutter, 12)
 
     def _scroll_to_end(self):
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
