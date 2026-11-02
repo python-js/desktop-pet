@@ -165,3 +165,48 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 
 
 0.17.2：对话任务通过校验后直接保存，无需确认。75项测试通过，覆盖默认单次、重复任务、相同待办去重、非法时间不保存、流式取消不保存、会话切换时保存到期提醒和重启保留。旧草稿仅保留兼容入口，不自动提交。
+
+## 0.31 P0 设计基座与外壳（2026-11-02）
+
+- 100项测试通过（`QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`），包含新增的 `test_shell_theme_and_responsive_layout`：1440 宽度侧栏 232px 且铭牌展开、900 宽度侧栏 68px 且铭牌折叠、导航待办计数随未完成数量更新、主题切换写入 `settings.json` 并在新窗口恢复。
+- 新增 `ui/tokens.py`（纸白/夜幕两套 token）、`ui/icons.py`（内联 SVG 转 QIcon）、`ui/components.py`（NavButton、IconButton、LiveBadge）、`ui/pet_tag.py`（32px 斜切、⌀10 穿孔、展开 208×196、折叠 52×112）；`ui/theme.py` 改为 token 生成 QSS 与调色板，`ui/fluent.py` 支持明暗主题；`app.py` 外壳改为 232/68 响应式导航、38px winbar 与铭牌；`settings.py` 持久化 `theme`。
+- 实测几何：1440 窗口侧栏 232px、铭牌 208×196；900 窗口侧栏 68px、铭牌 52×112、内容区 832×760；导航四项顺序与选中态正常，待办计数徽标与未完成数量一致。
+- 铭牌“说句话”切到对话页，“歇会儿”调用既有 `pet.toggle_animation()` 并同步铭牌与 winbar 状态；主题切换后应用底、侧栏、winbar、通用控件即时变色，重启恢复。
+- 截图证据：`.artifacts/p0-shots/p0-{1440,1180,900}-{light,dark}.png`，以及 900 宽度四页截图 `p0-900-{home,chat,tasks,settings}-light.png`；生成脚本 `.artifacts/capture_p0_shell.py`。
+- 阶段边界：四页内部仍保留 0.30 内联暖色样式，夜幕主题下页面卡片与部分文字未随主题切换，P2–P5 逐页替换；本轮未验证真实 Windows 高DPI/多显示器与 3D 桌宠联动。本轮记录时尚未提交或推送；对应改动已随 P4 收尾统一提交。
+- 收尾复验：补上“主题切换时品牌 logo 同步重绘”后重跑编译与全量测试（100 项通过），并重新生成 12 张截图，结果与上表一致；临时数据目录已清理，仅保留 `p0-shots` 与采集脚本。
+
+## 0.31 P1 数据层与后端能力（2026-11-02）
+
+- 108 项测试通过（同一离屏命令）。新增 `test_v6_upgrade_backs_up_and_adds_v7_columns`、`test_stats_completion_and_cross_midnight`、`test_quiet_hours_wrap_midnight_and_validation`、`test_early_nudge_mute_and_next_day`、`test_export_redacts_and_clear_keeps_restorable_backup`、`test_connection_test_reports_status_without_secrets`，以及界面层的 `test_quiet_hours_suppress_then_auto_postpone`、`test_early_nudge_and_mute_today`；既有 v1/v2/v3 迁移测试的期望版本同步改为 7。
+- 迁移：`PRAGMA user_version=7`；v1–v6 打开时先生成 `.v{version}-*.bak` 再迁移。v6 专测确认旧任务保留，新增 `completed_at/source/note/muted_until/early_notified_at` 为 NULL 或默认值，`task_events` 表创建，`drafts.note` 为空字符串。
+- 时间口径：`completed_at`、事件 `at`、`notified_at`、`early_notified_at` 统一按 UTC 存储；`today_stats()` 用调用方时区计算本地日半开区间，跨夜用例以 +08 时区验证 23:50 完成与次日 00:05 完成分别计入两天，按时完成率分别为 100% 与 0%。DST 由带 tzinfo 的日期边界承载；Windows 固定偏移时区不做跨 DST 的额外模拟。
+- 免打扰：`in_quiet_hours()` 支持跨夜与起止相同（视为关闭）。界面测试把免打扰窗口设在当前时刻前后各 1 小时，`check_due()` 不创建提醒窗口，同一任务同一天只写 1 条 `quiet` 事件；关闭免打扰并开启自动顺延后，关闭提醒卡会把 `due_at` 后移 10 分钟、清空 `notified_at` 并写 `auto_postponed` 事件。
+- 提前提点与今天别再说：到期前 10 分钟内的任务写 1 条 `early` 事件并只通过桌宠气泡提示；`mute_today()` 记本地日期，`due()/early_due()` 当日过滤、次日恢复，核心测试覆盖。
+- 导出与清空：导出的 JSON 仅含 tasks/task_events/sessions/messages/drafts，测试断言不含 api_key、secret、webhook、authorization、dpapi 字样；`clear_data()` 先备份再在单事务内清空，测试用备份文件重新读取确认任务与消息仍可恢复。
+- 连接测试：`test_connection()` 超时 8 秒、`max_tokens=1`；模拟 HTTP 401 时只返回“连接失败：HTTP 401…”，断言 API Key 未出现在错误文本中；成功路径返回整数毫秒耗时。
+- 默认值与持久化：`early_nudge=True`、`auto_postpone=False`、`dnd_enabled=True`、`dnd_start=22:30`、`dnd_end=07:30`、`density=comfortable`；主题切换触发写盘后实测上述键与自定义 `density=compact` 均在新窗口恢复。
+- 阶段边界：设置页的免打扰/提前提点/自动顺延开关、密度切换、测试连接、导出/清空入口及清空二次确认在 P5 落地；P1 只保证配置键、行为与后端 API 可用。0.30 遗留的已完成任务没有 `completed_at`，统计暂不回溯，P3 展示完成时刻时按“无记录”处理。本轮记录时尚未提交或推送；对应改动已随 P4 收尾统一提交。
+
+## 0.31 P2 首页（2026-11-02）
+
+- 108 项测试通过（`QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`）。重写 `test_home_overview_and_navigation`，断言：初始空态主卡为空、节奏环 0/0、无安排行、两个空态面板可见、首页仅 1 个 `PrimaryPushButton` 且为“新增待办”；加入今日逾期与更早逾期后主卡选更早任务、正文含“另有 1 件逾期”、行高 58、节奏环 `(done,total)=(0,1)`；密度改为 `compact` 后行高 44；`Enter` 跳转待办页并选中任务；新增 chat 来源任务并完成今日任务后日志卡片出现、空态隐藏、`done==1` 且 `total==len(home_row_widgets)`；删除更早逾期后主卡切到“下一次”；1440 节奏卡在 `(0,1)`、900 在 `(1,0)` 且横向滚动最大值为 0；`toggle_theme()` 后 `tokens().name=='dark'` 且 `home_date` 样式含暗色 token 颜色。
+- 修复清单：`due_when()` 接受 `datetime`（此前只接受字符串）；主卡从空态切回任务态时补 `count_widget.show()`；时间块 `ElidedLabel` 设 `QSizePolicy.Preferred` 避免被压成“今天 ...”；居中容器改为单权重 `addWidget(content, 100)`，修复内容只占约 1/3 宽；页内标签改为内联 `font-family/font-size/weight` 并记录 token 名，解决全局 QSS `QLabel{font-size:13px}` 覆盖字号与主题切换不重着色；主卡逾期且 `remind_count==0` 时显示“待处理”，不再显示“已提醒 0 次”。
+- 截图证据：`.artifacts/p2-shots/p2-{1440,1180,900}-{light,dark}.png`，生成脚本 `.artifacts/capture_p2_home.py`（临时数据目录，含今日完成、逾期、下一次与免打扰事件）。逐张检查：1440/1180 主卡与节奏卡两栏、900 单列；1440/1180 工作日志三列/单列；三档宽度横向滚动条最大值均为 0；暗色下卡片、状态轨、状态胶囊与文字对比正常；主卡标题、原定时间与状态文案无截断。
+- 阶段边界：仅首页替换为 token 内联样式，对话助手、待办事项、偏好设置仍为 0.30 暖色样式，暗色下局部偏亮，由 P3–P5 逐页替换；首页为只读汇总，跳转待办复用既有 `focus_task`；未在真实 Windows 高 DPI/多显示器下验收。本轮记录时尚未提交或推送；对应改动已随 P4 收尾统一提交。
+
+## 0.31 P3 待办事项（2026-11-02）
+
+- 109 项测试通过（同一离屏命令）。新增 `test_tasks_page_groups_bulk_density_and_theme`，断言：未完成视图 3 行且逾期排在今天之前、计数 `3 项未完成`、逾期胶囊文案与 3px 警示轨、已完成视图单行且 `strikeOut` 与 `已完成` 胶囊、时间下拉在已完成视图禁用；紧凑 44 / 宽松 58 且 `settings.json` 落盘 `density=compact`；搜索与时间范围过滤行数；双击调用编辑入口、行内完成环不调用编辑且完成数递增；批量条在选中后可见、`604×42`、`x=(page.width-604)//2`、`y=page.height-62`，取消后隐藏且选择清空；批量完成两项后未完成 0、已完成 4；已完成视图全选删除后 `deleted_batch` 4 项、撤销按钮可见，撤销后 4 项仍为 `done`；1180/900 宽度横向滚动最大值为 0；切换夜幕后行标题颜色取 `tokens().ink_3`。
+- 复用既有 `task_refresh_timer`（30 秒）刷新待办与逾期时长，未新增计时器；提醒轮询、钉钉发送、草稿确认、软删除撤销与会话隔离保持原行为。
+- 修复清单：`qfluentwidgets` 的 `LineEdit.addAction()` 只接受 `QAction`，搜索图标改为持有单个 `QAction` 并在主题切换时 `setIcon()`，避免重复图标；`_Ring` 的 `set_toolTip` 笔误改为 `setToolTip`；空态爪印底从 13px 圆角改为 20px 正圆；`set_task_density()` 同步分段控件当前项，避免程序化切换后文案落后于行高；聊天删除改用 `register_deleted()`，批量撤销按钮与 `last_deleted` 行为统一；刷新列表时先 `hide()` 旧分组再 `deleteLater()`，消除重建瞬间旧行残影（900 宽度批量条截图复核发现）。
+- 截图证据：`.artifacts/p3-shots/p3-{1440,1180,900}-{light,dark}.png`、`p3-bulk-{light,dark}.png`、`p3-bulk-900.png`、`p3-done-{light,dark}.png`、`p3-compact.png`、`p3-empty-{light,dark}.png`，生成脚本 `.artifacts/capture_p3_tasks.py`。逐张检查：三档宽度横向滚动最大值均为 0；批量条 1440 与 900 均为 `604×42`，中心偏差 0，距底 20；紧凑档行高 44 且分段控件选中“紧凑”；已完成行虚线 + 删除线 + 苔绿；空态为苔绿圆底爪印且批量条不出现；暗色下搜索框、行卡片、状态胶囊与批量条反相显示正常。
+- 阶段边界：完成项放在“已完成”筛选内单独分组，不与未完成混排；延期任务沿用 `已延期`，不显示实时逾期时长；30 秒整表重建会重置行焦点，交互期间无感；未在真实 Windows 高 DPI/多显示器下验收。旧实现以 `_LEGACY_TASKS_030` 注释块保留在 `ui/tasks.py` 末尾。本轮记录时尚未提交或推送；对应改动已随 P4 收尾统一提交。
+
+## 0.31 P4 对话助手（2026-11-02）
+
+- 113 项测试通过（同一离屏命令）。新增 `tests/test_chat_rail.py` 4 项：1440 右栏宽 296 且右栏开关隐藏、1180 收起且可展开/再收起、回到 1440 恢复常驻；草稿卡“直接创建”后任务入库且草稿清空、草稿区隐藏，“先放着”后任务仍为空、草稿删除；“今天别再说”写入 `muted_until=本地日期`、线程出现“今天不再提醒”；`AssistantWorker` 对 `RuntimeError('SECRET raw provider body')` 只发“请求失败，请检查模型设置后重试。”。既有聊天/流式/UI/规划/重答/自动任务 35 项同时通过，覆盖停止丢弃、跨会话隔离、重试不重复用户消息。
+- 几何实测（离屏截图脚本输出）：1440 纸白/夜幕右栏 296、线程横向滚动 0、输入卡 720、草稿卡 720、右栏开关隐藏、侧栏 232；1180 纸白/夜幕右栏收起、开关可见、输入/草稿 720；900 纸白/夜幕紧凑档隐藏 Ctrl+Enter 提示、输入/草稿仍 720；1180 展开右栏 296、输入/草稿 720；900 展开右栏后输入/草稿收缩为 496。所有档位 `thread-scroll-x=0`。
+- 修复清单：① `ComposerCard.paintEvent` 用 `self.rect().adjusted(0.5,...)`（QRect 传浮点）触发原生 abort 且无 Python 堆栈，改为 `QRectF(self.rect()).adjusted()`；② `QHBoxLayout` 双侧 stretch + 中间 `stretch=1` 把可用空间三等分，输入卡只剩 404、草稿卡 282，新增 `CenteredHost` 动态 `setFixedWidth(min(720, host_width))`；③ 输入框上限 120 让空输入卡高达约 216px，收紧为 64，贴合设计稿 rows=2；④ `FluentIcon.SYNC` 在透明按钮上渲染成竖线，改用 `icons.py` 自绘 `sync` 图标 + `IconButton`，并为中心偏移与禁用色补处理。
+- 截图证据：`.artifacts/p4-shots/p4-{1440,1180,900}-{light,dark}.png`、`p4-1180-expanded-light.png`、`p4-900-expanded-light.png`、`p4-streaming.png`、`p4-error.png`，生成脚本 `.artifacts/capture_p4_chat.py`。逐张检查：两栏/单栏切换正确，右键展开后线程与输入同步收缩；输入卡与草稿卡同宽 720 居中；草稿卡五段信息与三按钮完整；右栏“今天安排”整行可点、逾期胶囊可见；暗色下气泡、输入卡、草稿头与右栏文字对比正常；流式特写为单条占位气泡，错误特写含脱敏原因与“重试/用本地规则记下”。
+- 阶段边界：任务表没有 `session_id`，右栏“这段对话落到了什么”取全局最新 `chat/draft` 任务，不宣称按会话归属；模型返回的 `tasks` 仍自动入库以保持既有行为，草稿卡只对 `add_draft()` 生成的草稿确认入库；真实 Windows 高 DPI/多显示器与 3D 桌宠联动未验收。旧聊天组件以 `_LEGACY_CHAT_WIDGETS_030`、旧草稿卡以 `_LEGACY_DRAFT_CARD_030` 注释块保留。本轮记录时尚未提交或推送；对应改动已随 P4 收尾统一提交。

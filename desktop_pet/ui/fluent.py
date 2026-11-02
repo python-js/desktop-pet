@@ -5,10 +5,12 @@ from qfluentwidgets import (PushButton, PrimaryPushButton, ComboBox as FluentCom
                             SpinBox as FluentSpinBox, CheckBox, LineEdit as FluentLineEdit, TextEdit,
                             setTheme, Theme, setThemeColor, setCustomStyleSheet)
 
+from . import tokens
 
-def configure_fluent():
-    setTheme(Theme.LIGHT)
-    setThemeColor('#C9563F')
+
+def configure_fluent(theme='light'):
+    setTheme(Theme.DARK if theme == 'dark' else Theme.LIGHT)
+    setThemeColor(tokens.get(theme).brand)
 
 
 class LineEdit(FluentLineEdit):

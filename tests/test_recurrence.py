@@ -105,7 +105,7 @@ class RecurrenceTests(unittest.TestCase):
                 self.assertEqual(store.pending()[0]['repeat_rule'], 'none')
                 self.assertEqual(store.pending()[0]['scheduled_at'], '2099-01-01T09:00:00+00:00')
                 self.assertEqual(len(list(Path(folder).glob('*.bak'))), 1)
-                self.assertEqual(store.db.execute('PRAGMA user_version').fetchone()[0], 6)
+                self.assertEqual(store.db.execute('PRAGMA user_version').fetchone()[0], 7)
             finally:
                 store.close()
 

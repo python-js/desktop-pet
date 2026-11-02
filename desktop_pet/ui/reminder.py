@@ -36,6 +36,7 @@ class ReminderDialog(QDialog):
         self.setFixedWidth(420)
         self._animated = False
         self._motion = None
+        self.resolved = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(22, 22, 22, 22)
         card = QFrame()
@@ -97,9 +98,9 @@ class ReminderDialog(QDialog):
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self.complete_button = button('完成', lambda checked=False: on_complete(), actions, primary=True)
+        self.complete_button = button('完成', lambda checked=False: self._resolve(on_complete), actions, primary=True)
         self.complete_button.setDefault(True)
-        self.snooze_button = button('10 分钟后', lambda checked=False: on_snooze(), actions)
+        self.snooze_button = button('10 分钟后', lambda checked=False: self._resolve(on_snooze), actions)
         if final:
             self.snooze_button.setEnabled(False)
             self.snooze_button.setToolTip(f'已提醒 {REMIND_LIMIT} 次，不再重复提醒')
@@ -107,10 +108,14 @@ class ReminderDialog(QDialog):
         open_button.setCursor(Qt.PointingHandCursor)
         open_button.setStyleSheet(f'QPushButton {{background:transparent;border:0;color:{MUTED};padding:8px 10px;font-size:12px;}}'
                                   f'QPushButton:hover {{color:{ACCENT_DARK};}}')
-        open_button.clicked.connect(lambda checked=False: on_open())
+        open_button.clicked.connect(lambda checked=False: self._resolve(on_open))
         actions.addWidget(open_button)
         actions.addStretch()
         body.addLayout(actions)
+
+    def _resolve(self, callback):
+        self.resolved = True
+        callback()
 
     def present(self, anchor=None, index=0):
         self.adjustSize()

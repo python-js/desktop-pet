@@ -1,36 +1,43 @@
 import re
 import sys
 import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QThread, QTimer, QLockFile, pyqtSignal
 from PyQt5.QtWidgets import (QApplication, QDialog,
                              QHBoxLayout, QLabel,
                              QMainWindow, QMenu,
-                             QMessageBox, QScrollArea, QSystemTrayIcon,
-                             QTabWidget, QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
-                             QStyle, QShortcut, QComboBox, QInputDialog, QPushButton, QButtonGroup)
-from PyQt5.QtGui import QKeySequence
+                             QMessageBox, QPushButton, QScrollArea, QSizePolicy,
+                             QSystemTrayIcon, QTabWidget, QTextBrowser, QTextEdit,
+                             QVBoxLayout, QWidget, QStyle, QShortcut, QComboBox,
+                             QInputDialog)
+from PyQt5.QtGui import QFont, QKeySequence
 
-from .assistant import ask, plain_text, reply_preview, RequestCancelled
-from .core import REMIND_LIMIT, TaskStore, decode_response, parse_due, utc_now
+from .assistant import ask, local_reply, plain_text, reply_preview, RequestCancelled
+from .core import (REMIND_LIMIT, TaskStore, decode_response, in_quiet_hours,
+                   local_day_bounds, parse_due, utc_now)
 from .platforms import data_directory, notify
 from . import dingtalk
 from .ui.common import button, local_time
 from .ui.draft_card import DraftCard
-from .ui.home import HomePageMixin
+from .ui.home import HomePageMixin, Line
 from .ui.tasks import TasksPageMixin
 from .ui.settings import SettingsPageMixin
+from .ui.chat_rail import ChatRail
 from .ui.pet import Pet
 from .ui.reminder import ReminderDialog
 from .recurrence import REPEAT_LABELS
 from .planning import daily_snapshot, planning_prompt, local_plan
 from .version import __version__
-from .ui.theme import apply_theme, application_icon, ACCENT, INK
-from .ui.chat_widgets import MessageHistory, Surface
+from .ui import icons, tokens as T
+from .ui.components import IconButton, LiveBadge, NavButton
+from .ui.pet_tag import PetTag
+from .ui.theme import apply_theme, application_icon, tokens
+from .ui.chat_widgets import CenteredHost, ComposerCard, MessageHistory, ModelChip
 from qfluentwidgets import PrimaryPushButton, TransparentPushButton, FluentIcon
-from .ui.controls import ComboBox as QComboBox, TextEdit as QTextEdit, FLUENT_MODE
-from qfluentwidgets import ScrollArea as QScrollArea
+from .ui.controls import ComboBox as QComboBox, TextEdit as QTextEdit
 
 
 def task_title_key(value):
@@ -91,94 +98,30 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.request_session = None
         self.stream_content = ''
         self.stream_row = None
+        self.error_row = None
+        self.request_model = ''
+        self.request_started = None
         self.exit_pending = False
         self.last_deleted = None
         self.reminders = {}
         self.settings = {}
         self.shutting_down = False
         self.load_configuration(secret_store, startup_manager)
+        self.theme = self.settings.get('theme', 'light')
+        if QApplication.instance() is not None:
+            apply_theme(QApplication.instance(), self.theme)
         self.dingtalk_result.connect(self.show_dingtalk_result)
         session_ids = {s['id'] for s in self.store.sessions()}
         self.active_session = self.settings.get('active_session', 'default')
         if self.active_session not in session_ids:
             self.active_session = 'default'
         self.setWindowTitle(f'Desktop Pet {__version__} · 你的待办伙伴')
-        self.setMinimumSize(1000, 640)
+        self.setMinimumSize(900, 640)
         available = QApplication.primaryScreen().availableGeometry()
         self.resize(min(1180, available.width() - 60), min(820, available.height() - 80))
         icon = application_icon()
         self.setWindowIcon(icon)
-        self.tabs = QTabWidget()
-        self.tabs.tabBar().hide()
-        self.tabs.setStyleSheet('QTabWidget::pane { border:0; background:transparent; }')
-        shell = QWidget()
-        shell_layout = QHBoxLayout(shell)
-        shell_layout.setContentsMargins(0, 0, 0, 0)
-        shell_layout.setSpacing(0)
-        sidebar = QWidget()
-        sidebar.setObjectName('sidebar')
-        sidebar.setFixedWidth(200)
-        side = QVBoxLayout(sidebar)
-        side.setContentsMargins(18, 28, 18, 22)
-        side.setSpacing(10)
-        brand_row = QHBoxLayout()
-        brand_row.setSpacing(10)
-        logo = QLabel()
-        logo.setPixmap(application_icon().pixmap(30, 30))
-        logo.setFixedSize(30, 30)
-        brand_row.addWidget(logo, 0, Qt.AlignTop)
-        brand_text = QVBoxLayout()
-        brand_text.setSpacing(1)
-        brand = QLabel('Pet Studio')
-        brand.setObjectName('brand')
-        brand_text.addWidget(brand)
-        tagline = QLabel('你的桌面事务伙伴')
-        tagline.setObjectName('subtitle')
-        brand_text.addWidget(tagline)
-        brand_row.addLayout(brand_text, 1)
-        side.addLayout(brand_row)
-        side.addSpacing(28)
-        if FLUENT_MODE:
-            from qfluentwidgets import NavigationInterface, FluentIcon
-            self.navigation = NavigationInterface(sidebar, showMenuButton=False, collapsible=False)
-            self.navigation.setExpandWidth(164)
-            for index, (title, icon_value) in enumerate(zip(
-                    ('首页', '对话助手', '待办事项', '偏好设置'),
-                    (FluentIcon.HOME, FluentIcon.CHAT, FluentIcon.CHECKBOX, FluentIcon.SETTING))):
-                self.navigation.addItem(str(index), icon_value, title,
-                                        onClick=lambda checked=False, i=index: self.tabs.setCurrentIndex(i))
-            self.navigation.panel.expand(useAni=False)
-            self.navigation.panel.topLayout.setSpacing(8)
-            for index in range(4):
-                item = self.navigation.widget(str(index))
-                item.setFixedHeight(40)
-                item.itemWidget.setFixedHeight(40)
-                font = item.itemWidget.font()
-                font.setPixelSize(15)
-                item.itemWidget.setFont(font)
-            self.navigation.setCurrentItem('0')
-            self.tabs.currentChanged.connect(lambda i: self.navigation.setCurrentItem(str(i)))
-            side.addWidget(self.navigation, 1)
-        else:
-            self.navigation = QButtonGroup(self)
-            self.nav_buttons = []
-            for index, title in enumerate(('首页', '对话助手', '待办事项', '偏好设置')):
-                nav = QPushButton(title)
-                nav.setProperty('variant', 'nav')
-                nav.setCheckable(True)
-                nav.clicked.connect(lambda checked=False, i=index: self.tabs.setCurrentIndex(i))
-                self.navigation.addButton(nav, index)
-                side.addWidget(nav)
-                self.nav_buttons.append(nav)
-            self.nav_buttons[0].setChecked(True)
-            self.tabs.currentChanged.connect(lambda i: self.nav_buttons[i].setChecked(True))
-            side.addStretch()
-        footer = QLabel(f'DESKTOP PET\nv{__version__}  ·  Windows')
-        footer.setObjectName('versionLabel')
-        side.addWidget(footer)
-        shell_layout.addWidget(sidebar)
-        shell_layout.addWidget(self.tabs, 1)
-        self.setCentralWidget(shell)
+        self.build_shell()
         self.build_home()
         self.build_chat()
         self.build_tasks()
@@ -206,6 +149,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             self.pet.load_image(image_path)
         self.pet.show()
         QApplication.instance().screenRemoved.connect(self.pet.ensure_visible)
+        self.apply_layout(self.width(), force=True)
+        self.refresh_pet_tag()
         self.refresh_tasks()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_due)
@@ -214,104 +159,461 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.task_refresh_timer.timeout.connect(self.refresh_tasks)
         self.task_refresh_timer.start(30000)
 
+    def build_shell(self):
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName('mainTabs')
+        self.tabs.tabBar().hide()
+        shell = QWidget()
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+
+        self.sidebar = QWidget()
+        self.sidebar.setObjectName('sidebar')
+        self.sidebar.setAttribute(Qt.WA_StyledBackground, True)
+        self.side_layout = QVBoxLayout(self.sidebar)
+        self.side_layout.setContentsMargins(T.SIDEBAR_PAD, 16, T.SIDEBAR_PAD, 12)
+        self.side_layout.setSpacing(4)
+
+        self.logo = QLabel()
+        self.logo.setPixmap(application_icon().pixmap(30, 30))
+        self.logo.setFixedSize(30, 30)
+        logo = self.logo
+        self.brand_full = QWidget()
+        brand_row = QHBoxLayout(self.brand_full)
+        brand_row.setContentsMargins(0, 0, 0, 0)
+        brand_row.setSpacing(10)
+        brand_row.addWidget(logo, 0, Qt.AlignVCenter)
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(1)
+        brand = QLabel('Pet Studio')
+        brand.setObjectName('brand')
+        brand_text.addWidget(brand)
+        tagline = QLabel('你的桌面事务伙伴')
+        tagline.setObjectName('subtitle')
+        brand_text.addWidget(tagline)
+        brand_row.addLayout(brand_text, 1)
+        self.brand_compact = QWidget()
+        compact_row = QHBoxLayout(self.brand_compact)
+        compact_row.setContentsMargins(0, 0, 0, 0)
+        compact_row.addStretch()
+        self.compact_logo = QLabel()
+        self.compact_logo.setPixmap(application_icon().pixmap(30, 30))
+        self.compact_logo.setFixedSize(30, 30)
+        compact_row.addWidget(self.compact_logo)
+        compact_row.addStretch()
+        self.side_layout.addWidget(self.brand_full)
+        self.side_layout.addWidget(self.brand_compact)
+        self.brand_compact.hide()
+        self.side_layout.addSpacing(20)
+
+        nav_host = QWidget()
+        nav_box = QVBoxLayout(nav_host)
+        nav_box.setContentsMargins(0, 0, 0, 0)
+        nav_box.setSpacing(2)
+        self.nav_buttons = []
+        self.nav_todo = None
+        for index, (title, icon_name) in enumerate((
+                ('首页', 'home'), ('对话助手', 'chat'),
+                ('待办事项', 'todo'), ('偏好设置', 'gear'))):
+            nav = NavButton(title, icon_name)
+            nav.clicked.connect(lambda checked=False, i=index: self.tabs.setCurrentIndex(i))
+            nav_box.addWidget(nav)
+            self.nav_buttons.append(nav)
+            if title == '待办事项':
+                self.nav_todo = nav
+        self.nav_buttons[0].setChecked(True)
+        self.side_layout.addWidget(nav_host)
+        self.side_layout.addStretch()
+
+        self.pet_tag = PetTag()
+        self.pet_tag.set_paused(bool(self.settings.get('pet_paused')))
+        self.pet_tag.chat_requested.connect(self.open_chat_input)
+        self.pet_tag.pause_toggled.connect(self.toggle_pet_pause)
+        self.side_layout.addWidget(self.pet_tag)
+        self.side_layout.addSpacing(8)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(4)
+        self.version_label = QLabel(f'v{__version__}')
+        self.version_label.setObjectName('versionLabel')
+        footer.addWidget(self.version_label)
+        footer.addStretch()
+        self.theme_button = IconButton('sun' if self.theme == 'dark' else 'moon',
+                                       '切换纸白 / 夜幕')
+        self.theme_button.clicked.connect(self.toggle_theme)
+        footer.addWidget(self.theme_button)
+        self.side_layout.addLayout(footer)
+        shell_layout.addWidget(self.sidebar)
+
+        main_column = QWidget()
+        main_box = QVBoxLayout(main_column)
+        main_box.setContentsMargins(0, 0, 0, 0)
+        main_box.setSpacing(0)
+        winbar = QWidget()
+        winbar.setObjectName('winbar')
+        winbar.setAttribute(Qt.WA_StyledBackground, True)
+        winbar.setFixedHeight(T.WINBAR_H)
+        win_box = QHBoxLayout(winbar)
+        win_box.setContentsMargins(16, 0, 12, 0)
+        win_box.setSpacing(8)
+        self.win_mark = QLabel()
+        self.win_mark.setPixmap(icons.pixmap('paw', tokens().brand, 14))
+        self.win_mark.setFixedSize(14, 14)
+        win_box.addWidget(self.win_mark)
+        win_title = QLabel('Pet Studio')
+        win_title.setObjectName('winbarTitle')
+        win_box.addWidget(win_title)
+        win_context = QLabel('· 控制台')
+        win_context.setObjectName('winbarContext')
+        win_box.addWidget(win_context)
+        win_box.addStretch()
+        paused = bool(self.settings.get('pet_paused'))
+        self.live_badge = LiveBadge('小满 正在歇会儿' if paused else '小满 正在桌面值守',
+                                    'muted' if paused else 'calm')
+        win_box.addWidget(self.live_badge)
+        main_box.addWidget(winbar)
+        main_box.addWidget(self.tabs, 1)
+        shell_layout.addWidget(main_column, 1)
+        self.setCentralWidget(shell)
+        self.tabs.currentChanged.connect(self._sync_nav)
+
+    def _sync_nav(self, index):
+        for position, button in enumerate(self.nav_buttons):
+            button.setChecked(position == index)
+
+    def apply_layout(self, width, force=False):
+        expanded = width >= 1280
+        if not force and getattr(self, '_layout_expanded', None) == expanded:
+            return
+        self._layout_expanded = expanded
+        if expanded:
+            self.sidebar.setFixedWidth(T.RAIL_W)
+            self.side_layout.setContentsMargins(T.SIDEBAR_PAD, 16, T.SIDEBAR_PAD, 12)
+            self.brand_full.show()
+            self.brand_compact.hide()
+            self.version_label.show()
+        else:
+            self.sidebar.setFixedWidth(T.RAIL_W_COLLAPSED)
+            self.side_layout.setContentsMargins(8, 16, 8, 12)
+            self.brand_full.hide()
+            self.brand_compact.show()
+            self.version_label.hide()
+        for button in self.nav_buttons:
+            button.set_collapsed(not expanded)
+        self.pet_tag.set_collapsed(not expanded)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'sidebar'):
+            self.apply_layout(event.size().width())
+        if hasattr(self, 'home_top'):
+            self.apply_home_layout(event.size().width())
+        if hasattr(self, 'task_segments'):
+            self.apply_tasks_layout(event.size().width())
+        if hasattr(self, 'chat_bar'):
+            self.apply_chat_layout(event.size().width())
+
+    def toggle_theme(self):
+        self.theme = 'dark' if self.theme == 'light' else 'light'
+        self.settings['theme'] = self.theme
+        try:
+            self.persist_settings()
+        except OSError:
+            self.statusBar().showMessage('主题设置暂时无法保存，本次运行仍然有效。', 6000)
+        apply_theme(QApplication.instance(), self.theme)
+        self.theme_button.set_icon_name('sun' if self.theme == 'dark' else 'moon')
+        self.win_mark.setPixmap(icons.pixmap('paw', tokens().brand, 14))
+        self.logo.setPixmap(application_icon().pixmap(30, 30))
+        self.compact_logo.setPixmap(application_icon().pixmap(30, 30))
+        for button in self.nav_buttons:
+            button.refresh_theme()
+        self.pet_tag.refresh_theme()
+        self.live_badge.refresh_theme()
+        if hasattr(self, 'home_hero'):
+            self.refresh_home()
+        if hasattr(self, 'task_segments'):
+            self.refresh_tasks()
+        if hasattr(self, 'chat_bar'):
+            self.refresh_chat_theme()
+        self.statusBar().showMessage(
+            '已切换到夜幕主题' if self.theme == 'dark' else '已切换到纸白主题', 4000)
+
+    def refresh_pet_tag(self):
+        if not hasattr(self, 'pet_tag'):
+            return
+        now = datetime.now().astimezone()
+        pending = [dict(row) for row in self.store.pending()]
+        today = [row for row in pending
+                 if parse_due(row['due_at']).astimezone().date() == now.date()]
+        upcoming = sorted((row for row in pending if parse_due(row['due_at']).astimezone() > now),
+                          key=lambda row: parse_due(row['due_at']))
+        self.pet_tag.set_stats(len(today), upcoming[0]['due_at'] if upcoming else None, len(pending))
+        if self.nav_todo is not None:
+            self.nav_todo.set_count(len(pending))
+        paused = bool(self.settings.get('pet_paused'))
+        if hasattr(self, 'pet'):
+            paused = self.pet.paused
+            self.pet_tag.set_mode('3D · 哈士奇' if self.pet.mode == '3d' else '2D · 内置')
+        self.pet_tag.set_paused(paused)
+        if hasattr(self, 'live_badge'):
+            self.live_badge.set_text('小满 正在歇会儿' if paused else '小满 正在桌面值守')
+            self.live_badge.set_tone('muted' if paused else 'calm')
+
+    def open_chat_input(self):
+        self.tabs.setCurrentIndex(1)
+        self.input.setFocus(Qt.OtherFocusReason)
+
+    def toggle_pet_pause(self):
+        if not hasattr(self, 'pet'):
+            return
+        self.pet.toggle_animation()
+        self.refresh_pet_tag()
+
     def build_chat(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 28, 30, 20)
-        layout.setSpacing(16)
-        heading = QLabel('对话助手')
-        heading.setObjectName('pageTitle')
-        subtitle = QLabel('聊聊想法，梳理计划。说清事项和时间，我来替你记下。')
-        subtitle.setObjectName('subtitle')
-        header = QHBoxLayout()
-        header.setSpacing(12)
-        heading_block = QVBoxLayout()
-        heading_block.setSpacing(4)
-        heading_block.addWidget(heading)
-        heading_block.addWidget(subtitle)
-        header.addLayout(heading_block, 1)
-        actions = QHBoxLayout()
-        actions.setSpacing(6)
-        def ghost(text, icon, callback):
-            control = TransparentPushButton(icon, text, self)
-            control.setMinimumHeight(36)
-            control.clicked.connect(callback)
-            actions.addWidget(control)
-            return control
-        new_chat = PrimaryPushButton(FluentIcon.ADD, '新对话', self)
-        new_chat.setMinimumHeight(36)
-        new_chat.clicked.connect(self.new_session)
-        actions.addWidget(new_chat)
-        ghost('重命名', FluentIcon.EDIT, self.rename_session)
-        self.plan_button = ghost('今日规划', FluentIcon.CALENDAR, self.plan_today)
-        self.plan_button.setToolTip('预览逾期和今天到期待办；确认后生成规划，保留未发送输入')
-        header.addLayout(actions)
-        layout.addLayout(header)
-        session_row = QHBoxLayout()
-        session_row.setSpacing(10)
-        session_label = QLabel('当前对话')
-        session_label.setObjectName('eyebrow')
-        session_row.addWidget(session_label)
+        self.chat_page = QWidget()
+        self.chat_page.setObjectName('chatPage')
+        self.chat_page.setAttribute(Qt.WA_StyledBackground, True)
+        shell = QHBoxLayout(self.chat_page)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+
+        self.chat_col = QWidget()
+        self.chat_col.setObjectName('chatCol')
+        self.chat_col.setAttribute(Qt.WA_StyledBackground, True)
+        column = QVBoxLayout(self.chat_col)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+
+        self.chat_bar = QWidget()
+        self.chat_bar.setObjectName('chatBar')
+        self.chat_bar.setAttribute(Qt.WA_StyledBackground, True)
+        self.chat_bar_layout = QHBoxLayout(self.chat_bar)
+        self.chat_bar_layout.setContentsMargins(32, 10, 32, 10)
+        self.chat_bar_layout.setSpacing(8)
+        self.chat_eyebrow = QLabel('当前对话')
+        self.chat_bar_layout.addWidget(self.chat_eyebrow)
         self.session_combo = QComboBox()
         self.session_combo.setMinimumContentsLength(12)
         self.session_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.session_combo.setMinimumWidth(280)
-        self.session_combo.setMaximumWidth(360)
-        session_row.addWidget(self.session_combo)
-        session_row.addStretch()
-        layout.addLayout(session_row)
+        self.session_combo.setMinimumWidth(180)
+        self.session_combo.setMaximumWidth(320)
+        self.chat_bar_layout.addWidget(self.session_combo)
+        self.rename_button = IconButton('edit', '重命名对话')
+        self.rename_button.clicked.connect(self.rename_session)
+        self.chat_bar_layout.addWidget(self.rename_button)
+        self.chat_rail_toggle = IconButton('side', '显示 / 收起右栏')
+        self.chat_rail_toggle.clicked.connect(self.toggle_chat_rail)
+        self.chat_bar_layout.addWidget(self.chat_rail_toggle)
+        self.chat_bar_layout.addStretch(1)
+        self.plan_button = TransparentPushButton(FluentIcon.CALENDAR, '今日规划', self.chat_bar)
+        self.plan_button.setMinimumHeight(30)
+        self.plan_button.setToolTip('预览逾期和今天到期待办；确认后生成规划，保留未发送输入')
+        self.plan_button.clicked.connect(self.plan_today)
+        self.chat_bar_layout.addWidget(self.plan_button)
+        self.new_chat_button = PrimaryPushButton(FluentIcon.ADD, '新对话', self.chat_bar)
+        self.new_chat_button.setMinimumHeight(30)
+        self.new_chat_button.clicked.connect(self.new_session)
+        self.chat_bar_layout.addWidget(self.new_chat_button)
+        column.addWidget(self.chat_bar)
         self.refresh_sessions()
         self.session_combo.currentIndexChanged.connect(self.switch_session)
+
         self.history = MessageHistory()
-        layout.addWidget(self.history, 3)
-        # 0.21 起流式内容直接更新历史里的占位消息，独立预览面板保留备查、不再显示：
-        # self.stream_preview = MessageHistory()
-        # self.stream_preview.setMaximumHeight(160)
-        # self.stream_preview.hide()
-        # layout.addWidget(self.stream_preview)
+        column.addWidget(self.history, 1)
+
+        self.draft_holder = QWidget()
+        self.draft_holder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        draft_row = QHBoxLayout(self.draft_holder)
+        draft_row.setContentsMargins(32, 0, 32, 8)
+        draft_row.setSpacing(0)
         self.draft_area = QScrollArea()
         self.draft_area.setWidgetResizable(True)
-        self.draft_area.setMaximumHeight(220)
+        self.draft_area.setFrameShape(QScrollArea.NoFrame)
+        self.draft_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.draft_area.setMaximumHeight(300)
         self.draft_widget = QWidget()
         self.drafts = QVBoxLayout(self.draft_widget)
+        self.drafts.setContentsMargins(0, 0, 0, 0)
+        self.drafts.setSpacing(8)
         self.draft_area.setWidget(self.draft_widget)
-        self.draft_area.hide()
-        layout.addWidget(self.draft_area)
-        composer = Surface(self)
-        composer.setObjectName('composerCard')
-        composer.setStyleSheet(f'QFrame#composerCard {{background:#FFFFFF;border:1px solid #F2E8DC;border-radius:16px;}} QFrame#composerCard[focused="true"] {{border-color:{ACCENT};}}')
-        composer_layout = QVBoxLayout(composer)
-        composer_layout.setContentsMargins(16, 12, 16, 12)
-        composer_layout.setSpacing(10)
+        draft_row.addWidget(CenteredHost(self.draft_area))
+        self.draft_holder.hide()
+        column.addWidget(self.draft_holder)
+
+        self.composer_holder = QWidget()
+        composer_row = QHBoxLayout(self.composer_holder)
+        composer_row.setContentsMargins(32, 8, 32, 20)
+        composer_row.setSpacing(0)
+        self.composer = ComposerCard()
+        composer_row.addWidget(CenteredHost(self.composer))
+
+        inside = QVBoxLayout(self.composer)
+        inside.setContentsMargins(14, 10, 14, 10)
+        inside.setSpacing(6)
         self.input = QTextEdit()
         self.input.setObjectName('composer')
-        self.input.setStyleSheet(f'QTextEdit#composer {{background:transparent;border:0;border-radius:0;padding:6px;color:{INK};}}')
-        self.input.installEventFilter(composer)
-        self.input.viewport().installEventFilter(composer)
-        self.input.setPlaceholderText('输入消息，Ctrl+Enter 发送；说出事项和时间即可自动创建待办')
-        self.input.setMinimumHeight(72)
-        self.input.setMaximumHeight(96)
-        composer_layout.addWidget(self.input)
+        self.input.setPlaceholderText('说出事项和时间，小满替你记成待办')
+        self.input.setMinimumHeight(52)
+        self.input.setMaximumHeight(64)
+        self.input.installEventFilter(self.composer)
+        self.input.viewport().installEventFilter(self.composer)
         self.input.textChanged.connect(self.save_input)
-        row = QHBoxLayout()
+        inside.addWidget(self.input)
+        inside.addWidget(Line())
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        self.model_chip = ModelChip()
+        bar.addWidget(self.model_chip)
         self.chat_status = QLabel('')
-        self.chat_status.setObjectName('subtitle')
-        self.chat_status.setWordWrap(True)
-        row.addWidget(self.chat_status, 1)
-        self.send = button('发送', self.send_message, row, primary=True)
-        self.stop_button = button('停止当前请求', self.stop_request, row)
+        self.chat_status.setWordWrap(False)
+        bar.addWidget(self.chat_status, 1)
+        self.chat_hint = QLabel('Ctrl+Enter 发送')
+        bar.addWidget(self.chat_hint)
+        self.regenerate_button = IconButton(
+            'sync', '在新对话中重新回答最后一个已回复问题，保留原对话与任务；需要配置模型', self.composer)
+        self.regenerate_button.setFixedSize(30, 30)
+        self.regenerate_button.clicked.connect(self.regenerate_reply)
+        bar.addWidget(self.regenerate_button)
+        self.stop_button = QPushButton('停止')
+        self.stop_button.setFixedHeight(28)
+        self.stop_button.clicked.connect(self.stop_request)
         self.stop_button.hide()
-        self.retry_button = button('重试上次请求', self.retry_request, row)
+        bar.addWidget(self.stop_button)
+        self.retry_button = QPushButton('重试')
+        self.retry_button.setFixedHeight(28)
+        self.retry_button.clicked.connect(self.retry_request)
         self.retry_button.hide()
-        self.regenerate_button = button('生成另一版', self.regenerate_reply, row)
-        self.regenerate_button.setToolTip('在新对话中重新回答最后一个已回复问题，保留原对话与任务；需要配置模型')
-        row.removeWidget(self.send)
-        row.addWidget(self.send)
-        composer_layout.addLayout(row)
-        layout.addWidget(composer)
+        bar.addWidget(self.retry_button)
+        self.send = PrimaryPushButton(FluentIcon.SEND, '发送', self.composer)
+        self.send.setMinimumHeight(30)
+        self.send.clicked.connect(self.send_message)
+        bar.addWidget(self.send)
+        inside.addLayout(bar)
+        column.addWidget(self.composer_holder)
+
         self.shortcut = QShortcut(QKeySequence('Ctrl+Return'), self.input)
         self.shortcut.activated.connect(self.send_message)
-        self.tabs.addTab(page, '聊天')
+
+        self.chat_rail = ChatRail(self.store)
+        self.chat_rail.open_task.connect(self.open_chat_task)
+        self.chat_rail.mute_task.connect(self.chat_mute_task)
+        self.chat_rail.plan_requested.connect(self.plan_today)
+        self.chat_rail.open_tasks.connect(lambda: self.tabs.setCurrentIndex(2))
+        self.chat_rail.open_settings.connect(lambda: self.tabs.setCurrentIndex(3))
+        shell.addWidget(self.chat_col, 1)
+        shell.addWidget(self.chat_rail)
+
+        self._chat_rail_open = False
+        self.refresh_chat_theme()
+        self.apply_chat_layout(self.width(), force=True)
+        self.refresh_chat_rail()
+        self.tabs.addTab(self.chat_page, '聊天')
+
+    def apply_chat_layout(self, width, force=False):
+        if not hasattr(self, 'chat_bar'):
+            return
+        pad = 32 if width > 1280 else 20
+        compact = width <= 1080
+        wide = width > 1280
+        state = (pad, compact, wide, self._chat_rail_open)
+        if not force and state == getattr(self, '_chat_layout_state', None):
+            return
+        self._chat_layout_state = state
+        self.chat_bar_layout.setContentsMargins(pad, 10, pad, 10)
+        self.composer_holder.layout().setContentsMargins(pad, 8, pad, 20)
+        self.draft_holder.layout().setContentsMargins(pad, 0, pad, 8)
+        self.chat_eyebrow.setVisible(not compact)
+        self.plan_button.setVisible(not compact)
+        self.chat_hint.setVisible(not compact)
+        self.session_combo.setMaximumWidth(320 if wide else 220)
+        self.chat_rail_toggle.setVisible(not wide)
+        self.chat_rail.setVisible(wide or self._chat_rail_open)
+
+    def toggle_chat_rail(self):
+        if self.width() > 1280:
+            return
+        self._chat_rail_open = not self._chat_rail_open
+        self.apply_chat_layout(self.width(), force=True)
+
+    def refresh_chat_theme(self):
+        if not hasattr(self, 'chat_bar'):
+            return
+        t = tokens()
+        self.chat_page.setStyleSheet(f'QWidget#chatPage{{background:{t.bg};}}')
+        self.chat_col.setStyleSheet(f'QWidget#chatCol{{background:{t.bg};}}')
+        self.chat_bar.setStyleSheet(f'QWidget#chatBar{{background:{t.surface};'
+                                    f'border-bottom:1px solid {t.border};}}')
+        self.chat_eyebrow.setStyleSheet(f'background:transparent;color:{t.ink_3};'
+                                        f'font-family:"{T.FONT_MONO}","Consolas",monospace;font-size:10px;')
+        self.chat_hint.setStyleSheet(f'background:transparent;color:{t.ink_4};'
+                                     f'font-family:"{T.FONT_UI}";font-size:10px;')
+        self.chat_status.setStyleSheet(f'background:transparent;color:{t.ink_3};'
+                                       f'font-family:"{T.FONT_UI}";font-size:10px;')
+        self.input.setStyleSheet(
+            f'QTextEdit#composer{{background:transparent;border:0;border-radius:0;padding:2px;'
+            f'color:{t.ink};font-family:"{T.FONT_UI}";font-size:13px;}}')
+        for control in (self.stop_button, self.retry_button):
+            control.setStyleSheet(
+                f'QPushButton{{background:transparent;color:{t.ink_2};border:1px solid {t.border};'
+                f'border-radius:8px;padding:0 10px;font-family:"{T.FONT_UI}";font-size:11px;}}'
+                f'QPushButton:hover{{border-color:{t.brand};color:{t.ink};}}'
+                f'QPushButton:disabled{{color:{t.ink_4};}}')
+        self.draft_holder.setStyleSheet('background:transparent;')
+        self.draft_area.setStyleSheet('QScrollArea{background:transparent;border:0;}')
+        self.draft_widget.setStyleSheet('background:transparent;')
+        self.composer.refresh_theme()
+        self.regenerate_button.refresh_theme()
+        self.history.refresh_theme()
+        for index in range(self.drafts.count()):
+            card = self.drafts.itemAt(index).widget()
+            if hasattr(card, 'refresh_theme'):
+                card.refresh_theme()
+        self.update_model_chip()
+        if hasattr(self, 'chat_rail'):
+            self.chat_rail.refresh_theme()
+
+    def update_model_chip(self):
+        if not hasattr(self, 'model_chip'):
+            return
+        configured = bool(self.settings.get('model') and self.settings.get('base_url'))
+        self.model_chip.set_text(self.settings.get('model') if configured else '本地规则', configured)
+
+    def refresh_chat_rail(self):
+        if not hasattr(self, 'chat_rail'):
+            return
+        self.chat_rail.set_session(self.store.session(self.active_session)['title'],
+                                   self.store.message_count(self.active_session),
+                                   self.settings.get('model') if (
+                                       self.settings.get('model') and self.settings.get('base_url')
+                                   ) else '本地规则')
+
+    def open_chat_task(self, task_id):
+        self.show_main()
+        self.tabs.setCurrentIndex(2)
+        self.focus_task(task_id)
+
+    def chat_mute_task(self, task_id):
+        task = next((dict(row) for row in self.store.pending() if row['id'] == task_id), None)
+        if task is None:
+            self.statusBar().showMessage('这条待办已完成或删除，无需静音。', 5000)
+            return
+        self.store.mute_today(task_id)
+        message = f'已设置：{task["title"]} 今天不再提醒。'
+        self.store.add_message('assistant', message, self.active_session)
+        self.append_message('system', message)
+        self.refresh_tasks()
+        self.refresh_chat_rail()
+        self.statusBar().showMessage(message, 6000)
+
+    def retry_local(self):
+        messages = self.retry_messages or self.store.messages(20, self.active_session)
+        text = messages[-1]['content'] if messages else ''
+        self.retry_messages = None
+        self.retry_button.hide()
+        self.request_model = ''
+        self.on_reply(local_reply(text))
+        self.update_request_status()
 
     def refresh_sessions(self):
         self.session_combo.blockSignals(True)
@@ -320,6 +622,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             self.session_combo.addItem(session['title'], session['id'])
         self.session_combo.setCurrentIndex(self.session_combo.findData(self.active_session))
         self.session_combo.blockSignals(False)
+        self.refresh_chat_rail()
 
     def new_session(self):
         self.active_session = self.store.create_session()
@@ -350,12 +653,16 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.persist_settings()
         self.history.clear()
         self.stream_row = None
+        self.error_row = None
         for message in self.store.messages(session_id=self.active_session):
             self.append_message(message['role'], message['content'])
         while self.drafts.count():
             item = self.drafts.takeAt(0)
-            item.widget().deleteLater()
-        self.draft_area.hide()
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+        self.draft_holder.hide()
         for draft in self.store.drafts(self.active_session):
             self.add_draft(dict(draft))
         self.input.blockSignals(True)
@@ -365,6 +672,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.retry_button.setVisible(bool(self.retry_messages))
         self.update_request_status()
         self.render_stream()
+        self.refresh_chat_rail()
 
     def update_request_status(self):
         busy = self.worker is not None
@@ -376,6 +684,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             and bool(self.store.regeneration_context(self.active_session)))
         self.stop_button.setVisible(busy)
         self.stop_button.setEnabled(busy and not self.worker.cancel_event.is_set())
+        self.update_model_chip()
         if busy:
             if self.worker.cancel_event.is_set():
                 self.chat_status.setText('正在停止，等待连接释放（最长约45秒）')
@@ -459,6 +768,10 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.task_choice.pop(self.request_session, None)
         self.stream_content = ''
         self.stream_row = None
+        self.error_row = None
+        configured = bool(self.settings.get('model') and self.settings.get('base_url'))
+        self.request_model = self.settings.get('model') if configured else ''
+        self.request_started = time.monotonic()
         tasks = [dict(row) for row in self.store.pending()]
         self.worker = AssistantWorker(self.settings, messages, tasks, self)
         self.stream_timer.start()
@@ -527,6 +840,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.request_session = None
         self.stream_content = ''
         self.stream_row = None
+        self.request_model = ''
+        self.request_started = None
         self.update_request_status()
         if self.exit_pending:
             self.quit_app()
@@ -587,7 +902,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
                              and parse_due(row['due_at']) == parse_due(op['due_at'])
                              and row['repeat_rule'] == repeat), None)
             if existing is None:
-                self.store.add(op['title'], op['due_at'], repeat=repeat, dingtalk=dingtalk_flag)
+                self.store.add(op['title'], op['due_at'], repeat=repeat, dingtalk=dingtalk_flag, source='chat')
             elif dingtalk_flag and not existing['dingtalk']:
                 self.store.set_dingtalk(existing['id'], True)
             prefix = '已有待办：' if existing else '已保存：'
@@ -641,8 +956,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             return f'已完成：{row["title"]}。'
         self.store.delete(row['id'])
         self.dismiss_reminder(row['id'])
-        self.last_deleted = row['id']
-        self.undo_button.setEnabled(True)
+        self.register_deleted([row['id']])
         return f'已删除：{row["title"]}（可在待办页撤销删除）。'
 
     def run_task_ops(self, ops, session_id):
@@ -665,6 +979,12 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             self.task_choice[session_id] = choice
         return receipts, errors, choice
 
+    def _reply_meta(self):
+        if self.worker is None or not self.request_model:
+            return '小满 · 本地规则'
+        elapsed = time.monotonic() - self.request_started if self.request_started else 0
+        return f'小满 · {self.request_model} · 用时 {elapsed:.1f} 秒'
+
     def on_reply(self, content):
         if self.worker is not None and self.worker.cancel_event.is_set():
             return
@@ -686,32 +1006,41 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.store.add_message('assistant', reply, session_id)
         self.refresh_sessions()
         if visible:
-            if self.stream_row is not None:
-                self.history.update_row(self.stream_row, reply, markdown=True)
+            row = self.error_row
+            if row is not None:
+                row.clear_error()
+                self.history.update_row(row, reply, markdown=True)
+                row.set_meta(self._reply_meta())
+                self.error_row = None
+            elif self.stream_row is not None:
+                row = self.stream_row
+                self.history.update_row(row, reply, markdown=True)
+                row.set_meta(self._reply_meta())
                 self.stream_row = None
             else:
-                self.history.append_message('assistant', reply)
+                row = self.history.append_message('assistant', reply)
+                row.set_meta(self._reply_meta())
         if errors:
             note = '部分建议未采用：' + '；'.join(errors)
             self.store.add_message('assistant', note, session_id)
             if visible:
                 self.append_message('system', note)
+        self.refresh_chat_rail()
         self.pet.say(plain_text(reply) or reply)
 
     def on_error(self, message):
-        if self.worker.cancel_event.is_set():
+        if self.worker is not None and self.worker.cancel_event.is_set():
             return
         session_id = self.request_session
         self.retry_by_session[session_id] = list(self.worker.messages)
         if session_id == self.active_session:
             self.retry_messages = self.retry_by_session[session_id]
             self.retry_button.show()
-            text = '发送失败：' + message + '\n可修改设置后点击“重试上次请求”，不会重复添加原消息。'
-            if self.stream_row is not None:
-                self.history.update_row(self.stream_row, text)
-                self.stream_row = None
-            else:
-                self.append_message('assistant', text)
+            row = self.stream_row or self.history.append_message('assistant', '发送失败')
+            self.history.show_error(row, '发送失败', message,
+                                    on_retry=self.retry_request, on_local=self.retry_local)
+            self.stream_row = None
+            self.error_row = row
         else:
             self.statusBar().showMessage('其他对话请求失败，切回该对话可重试。', 8000)
 
@@ -721,8 +1050,9 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
 
         def remove_card():
             self.drafts.removeWidget(card)
+            card.hide()
             card.deleteLater()
-            self.draft_area.setVisible(self.drafts.count() > 0)
+            self.draft_holder.setVisible(self.drafts.count() > 0)
 
         def saved(message):
             self.store.add_message('assistant', message, session_id)
@@ -733,7 +1063,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         card.saved.connect(saved)
         card.removed.connect(remove_card)
         self.drafts.addWidget(card)
-        self.draft_area.show()
+        self.draft_holder.show()
 
     def dismiss_reminder(self, task_id):
         dialog = self.reminders.pop(task_id, None)
@@ -750,11 +1080,29 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.tabs.setCurrentIndex(2)
         self.focus_task(task_id)
 
+    def quiet_reason(self, now):
+        if self.settings.get('pet_paused'):
+            return 'paused'
+        if self.settings.get('dnd_enabled', True):
+            try:
+                if in_quiet_hours(now, self.settings.get('dnd_start'), self.settings.get('dnd_end')):
+                    return 'dnd'
+            except ValueError:
+                pass
+        return ''
+
     def check_due(self):
-        for task in self.store.due():
+        now = datetime.now().astimezone()
+        current = now.astimezone(timezone.utc)
+        quiet = self.quiet_reason(now)
+        for task in self.store.due(current):
             task = dict(task)
             task_id = task['id']
             if task_id in self.reminders:
+                continue
+            if quiet:
+                if not self.store.quiet_logged(task_id, local_day_bounds(now)[0]):
+                    self.store.record_quiet(task_id, current, quiet)
                 continue
             final = task.get('remind_count', 0) + 1 >= REMIND_LIMIT
             dialog = ReminderDialog(
@@ -763,11 +1111,20 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
                 on_snooze=lambda checked=False, tid=task_id: self.resolve(tid, True),
                 on_open=lambda checked=False, tid=task_id: self.open_reminder_task(tid),
                 final=final)
-            dialog.finished.connect(lambda _=0, tid=task_id, d=dialog: self.forget_reminder(tid, d))
+
+            def finished(_=0, tid=task_id, d=dialog, title=task['title']):
+                acted = d.resolved
+                self.forget_reminder(tid, d)
+                if not acted and self.settings.get('auto_postpone'):
+                    self.store.snooze(tid, datetime.now(timezone.utc), minutes=10, auto=True)
+                    self.statusBar().showMessage(f'“{title}”没有回应，已自动顺延 10 分钟。', 8000)
+                    self.refresh_tasks()
+
+            dialog.finished.connect(finished)
             self.reminders[task_id] = dialog
             anchor = self.pet.frameGeometry() if self.pet.isVisible() else None
             dialog.present(anchor, len(self.reminders) - 1)
-            self.store.mark_shown(task_id)
+            self.store.mark_shown(task_id, current)
             if final:
                 self.statusBar().showMessage(f'“{task["title"]}”已提醒 {REMIND_LIMIT} 次，标记为延期，不再提醒。', 10000)
             self.pet.say('到时间了：' + task['title'])
@@ -775,6 +1132,44 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             notify(self.tray, '待办提醒', task['title'])
             if task.get('dingtalk'):
                 self.push_dingtalk(task)
+        self.check_early(now, current, quiet)
+
+    def check_early(self, now, current, quiet):
+        if quiet or not self.settings.get('early_nudge', True):
+            return
+        for task in self.store.early_due(current):
+            task = dict(task)
+            minutes = max(1, int((parse_due(task['due_at']) - current).total_seconds() // 60))
+            if self.store.mark_early_shown(task['id'], current):
+                self.pet.say(f'还有 {minutes} 分钟：{task["title"]}')
+                self.statusBar().showMessage(f'提前提醒：{task["title"]} 还有 {minutes} 分钟。', 6000)
+
+    # 0.30 旧实现保留备查（无免打扰、提前提点与自动顺延）：
+    # def check_due(self):
+    #     for task in self.store.due():
+    #         task = dict(task)
+    #         task_id = task['id']
+    #         if task_id in self.reminders:
+    #             continue
+    #         final = task.get('remind_count', 0) + 1 >= REMIND_LIMIT
+    #         dialog = ReminderDialog(
+    #             self, task,
+    #             on_complete=lambda checked=False, tid=task_id: self.resolve(tid, False),
+    #             on_snooze=lambda checked=False, tid=task_id: self.resolve(tid, True),
+    #             on_open=lambda checked=False, tid=task_id: self.open_reminder_task(tid),
+    #             final=final)
+    #         dialog.finished.connect(lambda _=0, tid=task_id, d=dialog: self.forget_reminder(tid, d))
+    #         self.reminders[task_id] = dialog
+    #         anchor = self.pet.frameGeometry() if self.pet.isVisible() else None
+    #         dialog.present(anchor, len(self.reminders) - 1)
+    #         self.store.mark_shown(task_id)
+    #         if final:
+    #             self.statusBar().showMessage(f'“{task["title"]}”已提醒 {REMIND_LIMIT} 次，标记为延期，不再提醒。', 10000)
+    #         self.pet.say('到时间了：' + task['title'])
+    #         self.pet.play_action('reminder')
+    #         notify(self.tray, '待办提醒', task['title'])
+    #         if task.get('dingtalk'):
+    #             self.push_dingtalk(task)
 
     def push_dingtalk(self, task):
         if not self.dingtalk_webhook:

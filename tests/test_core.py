@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from desktop_pet.assistant import ask, local_reply
-from desktop_pet.core import TaskStore, decode_response, parse_due, validate_endpoint, validate_task
+from desktop_pet.assistant import ask, local_reply, test_connection
+from desktop_pet.core import (TaskStore, decode_response, in_quiet_hours, parse_clock,
+                              parse_due, validate_endpoint, validate_task)
 
 
 class CoreTests(unittest.TestCase):
@@ -281,7 +282,7 @@ class CoreTests(unittest.TestCase):
         self.store.db.commit()
         self.store.close()
         self.store = TaskStore(self.path)
-        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0], 6)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0], 7)
         self.assertEqual(self.store.pending()[0]['id'], tid)
         self.assertEqual(self.store.pending()[0]['dingtalk'], 0)
         self.assertEqual(self.store.pending()[0]['remind_count'], 0)
@@ -334,6 +335,165 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(len(list(Path(self.temp.name).glob('old-v2.db.v2-*.bak'))), 1)
         finally:
             upgraded.close()
+
+
+    def test_v6_upgrade_backs_up_and_adds_v7_columns(self):
+        old_path = Path(self.temp.name) / 'old-v6.db'
+        with sqlite3.connect(old_path) as old:
+            old.executescript('''
+                CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT NOT NULL,due_at TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'pending',notified_at TEXT,created_at TEXT NOT NULL,
+                  dingtalk INTEGER NOT NULL DEFAULT 0,remind_count INTEGER NOT NULL DEFAULT 0,
+                  deferred INTEGER NOT NULL DEFAULT 0,repeat_rule TEXT NOT NULL DEFAULT 'none',
+                  scheduled_at TEXT,next_id TEXT);
+                CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL);
+                CREATE TABLE drafts(id TEXT PRIMARY KEY,title TEXT NOT NULL,due_at TEXT NOT NULL,created_at TEXT NOT NULL,
+                  session_id TEXT NOT NULL DEFAULT 'default',repeat_rule TEXT NOT NULL DEFAULT 'none');
+                INSERT INTO tasks(id,title,due_at,created_at)
+                  VALUES('legacy','旧任务','2099-01-01T00:00:00+00:00','2030-01-01T00:00:00+00:00');
+                INSERT INTO drafts VALUES('legacy-draft','旧草稿','2099-01-02T00:00:00+00:00','2030-01-01','default','none');
+                PRAGMA user_version=6;
+            ''')
+        old.close()
+        upgraded = TaskStore(old_path)
+        try:
+            self.assertEqual(upgraded.db.execute('PRAGMA user_version').fetchone()[0], 7)
+            row = upgraded.pending()[0]
+            self.assertEqual(row['id'], 'legacy')
+            self.assertIsNone(row['completed_at'])
+            self.assertIsNone(row['muted_until'])
+            self.assertIsNone(row['early_notified_at'])
+            self.assertEqual((row['source'], row['note']), ('manual', ''))
+            self.assertEqual(upgraded.drafts('default')[0]['note'], '')
+            self.assertIsNotNone(upgraded.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_events'").fetchone())
+            self.assertEqual(len(list(Path(self.temp.name).glob('old-v6.db.v6-*.bak'))), 1)
+        finally:
+            upgraded.close()
+
+    def test_stats_completion_and_cross_midnight(self):
+        tz = timezone(timedelta(hours=8))
+        day1 = datetime(2030, 1, 2, 23, 40, tzinfo=tz)
+        first = self.store.add('按时', datetime(2030, 1, 2, 23, 55, tzinfo=tz).isoformat(), day1)
+        second = self.store.add('跨夜', datetime(2030, 1, 2, 23, 58, tzinfo=tz).isoformat(), day1)
+        self.store.mark_shown(first, day1)
+        self.store.complete(first, datetime(2030, 1, 2, 23, 50, tzinfo=tz))
+        self.store.complete(second, datetime(2030, 1, 3, 0, 5, tzinfo=tz))
+        completed = self.store.db.execute('SELECT completed_at FROM tasks WHERE id=?', (first,)).fetchone()[0]
+        self.assertEqual(parse_due(completed), datetime(2030, 1, 2, 15, 50, tzinfo=timezone.utc))
+
+        today = self.store.today_stats(datetime(2030, 1, 2, 23, 59, tzinfo=tz))
+        self.assertEqual((today['completed_today'], today['reminders_today'], today['on_time_rate']), (1, 1, 1.0))
+        self.assertEqual(today['week_on_time_dates'], ['2030-01-02'])
+        tomorrow = self.store.today_stats(datetime(2030, 1, 3, 0, 10, tzinfo=tz))
+        self.assertEqual((tomorrow['completed_today'], tomorrow['reminders_today'], tomorrow['on_time_rate']), (1, 0, 0.0))
+        self.assertEqual(tomorrow['week_on_time_days'], 1)
+        self.assertEqual(tomorrow['week_on_time_dates'], ['2030-01-02'])
+
+        events = self.store.today_events(datetime(2030, 1, 2, 23, 59, tzinfo=tz))
+        self.assertEqual([event['kind'] for event in events], ['created', 'created', 'reminded', 'completed'])
+        self.assertEqual([event['title'] for event in events], ['按时', '跨夜', '按时', '按时'])
+        self.assertEqual([event['kind'] for event in self.store.today_events(
+            datetime(2030, 1, 3, 0, 10, tzinfo=tz))], ['completed'])
+
+        self.store.reopen(first)
+        reopened = self.store.db.execute('SELECT completed_at FROM tasks WHERE id=?', (first,)).fetchone()[0]
+        self.assertIsNone(reopened)
+
+    def test_quiet_hours_wrap_midnight_and_validation(self):
+        def at(hour, minute):
+            return datetime(2030, 1, 1, hour, minute, tzinfo=timezone.utc)
+
+        self.assertTrue(in_quiet_hours(at(23, 0)))
+        self.assertTrue(in_quiet_hours(at(0, 0)))
+        self.assertTrue(in_quiet_hours(at(7, 29)))
+        self.assertFalse(in_quiet_hours(at(7, 30)))
+        self.assertFalse(in_quiet_hours(at(12, 0)))
+        self.assertTrue(in_quiet_hours(at(13, 0), '12:00', '14:00'))
+        self.assertFalse(in_quiet_hours(at(13, 0), '13:00', '13:00'))
+        self.assertEqual(parse_clock('7:05'), '07:05')
+        for value in ('24:00', '7:5', '', None):
+            with self.assertRaises(ValueError):
+                parse_clock(value)
+
+    def test_early_nudge_mute_and_next_day(self):
+        tz = timezone(timedelta(hours=8))
+        now = datetime(2030, 1, 2, 10, 0, tzinfo=tz)
+        soon = self.store.add('十点零五', datetime(2030, 1, 2, 10, 5, tzinfo=tz).isoformat(), now)
+        later = self.store.add('十点零八', datetime(2030, 1, 2, 10, 8, tzinfo=tz).isoformat(), now)
+        self.assertEqual([row['id'] for row in self.store.early_due(now)], [soon, later])
+        self.store.mute_today(later, now)
+        self.assertEqual([row['id'] for row in self.store.early_due(now)], [soon])
+        self.assertTrue(self.store.mark_early_shown(soon, now))
+        self.assertFalse(self.store.mark_early_shown(soon, now))
+        self.assertEqual(self.store.early_due(now), [])
+        muted = self.store.db.execute('SELECT muted_until FROM tasks WHERE id=?', (later,)).fetchone()[0]
+        self.assertEqual(muted, '2030-01-02')
+        self.store.mute_today(soon, now)
+        self.assertEqual(self.store.due(datetime(2030, 1, 2, 10, 30, tzinfo=tz)), [])
+        next_day = [row['id'] for row in self.store.due(datetime(2030, 1, 3, 10, 30, tzinfo=tz))]
+        self.assertIn(later, next_day)
+        kinds = [row[0] for row in self.store.db.execute(
+            "SELECT kind FROM task_events WHERE task_id=? ORDER BY id", (later,))]
+        self.assertEqual(kinds, ['created', 'muted'])
+
+    def test_export_redacts_and_clear_keeps_restorable_backup(self):
+        tid = self.store.add('保留', '2099-01-01T00:00:00Z', self.now)
+        self.store.add_message('user', 'hello')
+        self.store.save_draft('draft', '2099-01-02T00:00:00Z', note='备注')
+        self.store.mark_shown(tid, self.now)
+        export = Path(self.temp.name) / 'export.json'
+        self.store.export_data(export)
+        text = export.read_text(encoding='utf-8')
+        payload = json.loads(text)
+        for key in ('api_key', 'secret', 'webhook', 'authorization', 'dpapi'):
+            self.assertNotIn(key, text.lower())
+        self.assertEqual(len(payload['tasks']), 1)
+        self.assertEqual(payload['drafts'][0]['note'], '备注')
+        self.assertGreaterEqual(len(payload['task_events']), 2)
+
+        backup = self.store.clear_data()
+        self.assertTrue(backup and Path(backup).is_file())
+        self.assertEqual(self.store.pending(), [])
+        self.assertEqual(self.store.messages(), [])
+        self.assertEqual(self.store.drafts(), [])
+        self.assertEqual([row['id'] for row in self.store.sessions()], ['default'])
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM task_events').fetchone()[0], 0)
+        old = sqlite3.connect(backup)
+        try:
+            self.assertEqual(old.execute('SELECT COUNT(*) FROM tasks').fetchone()[0], 1)
+            self.assertEqual(old.execute('SELECT COUNT(*) FROM messages').fetchone()[0], 1)
+        finally:
+            old.close()
+
+    def test_connection_test_reports_status_without_secrets(self):
+        from urllib import error as urlerror
+
+        settings = {'base_url': 'https://example.com/v1', 'model': 'm', 'api_key': 'sk-should-not-leak'}
+        with patch('desktop_pet.assistant.request.build_opener') as build:
+            build.return_value.open.side_effect = urlerror.HTTPError(
+                'https://example.com', 401, 'Unauthorized', {}, None)
+            with self.assertRaises(ValueError) as caught:
+                test_connection(settings)
+        message = str(caught.exception)
+        self.assertIn('HTTP 401', message)
+        self.assertNotIn('sk-should-not-leak', message)
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, size):
+                return b'{}'
+
+        with patch('desktop_pet.assistant.request.build_opener') as build:
+            build.return_value.open.return_value = Response()
+            self.assertIsInstance(test_connection(settings, timeout=3), int)
+        with self.assertRaises(ValueError):
+            test_connection({'base_url': '', 'model': ''})
 
 
 if __name__ == '__main__':

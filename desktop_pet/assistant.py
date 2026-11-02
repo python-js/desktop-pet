@@ -1,6 +1,7 @@
 """Provider-neutral compatible chat protocol; never executes model actions."""
 import json
 import re
+import time
 from datetime import datetime, timedelta
 from urllib import request, error
 
@@ -193,6 +194,32 @@ def local_reply(text, now=None):
                                     '请到待办页双击编辑，或配置模型后再在对话中操作。', 'tasks': []},
                           ensure_ascii=False)
     return json.dumps({'reply': '当前是本地规则模式。你可以说“明天15:00提醒我交报告”，或在待办页手动创建任务。配置模型后可进行自由聊天和任务规划。', 'tasks': []}, ensure_ascii=False)
+
+
+def test_connection(settings, timeout=8):
+    """One minimal request; failures expose only the HTTP status or error category."""
+    base = str(settings.get('base_url') or '').strip()
+    model = str(settings.get('model') or '').strip()
+    if not base or not model:
+        raise ValueError('请先填写服务地址和模型')
+    endpoint = validate_endpoint(base) + '/chat/completions'
+    body = json.dumps({'model': model, 'stream': False, 'max_tokens': 1,
+                       'messages': [{'role': 'user', 'content': 'ping'}]}).encode('utf-8')
+    headers = {'Content-Type': 'application/json'}
+    if settings.get('api_key'):
+        headers['Authorization'] = 'Bearer ' + settings['api_key']
+    req = request.Request(endpoint, data=body, headers=headers, method='POST')
+    started = time.perf_counter()
+    try:
+        with request.build_opener(NoRedirect()).open(req, timeout=timeout) as response:
+            response.read(1024)
+        return int((time.perf_counter() - started) * 1000)
+    except error.HTTPError as exc:
+        raise ValueError(f'连接失败：HTTP {exc.code}（请检查地址、模型、鉴权或额度）') from None
+    except (error.URLError, TimeoutError, OSError):
+        raise ValueError(f'连接失败：{timeout} 秒内无法连接服务') from None
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        raise ValueError('连接失败：服务返回格式不兼容') from None
 
 
 def ask(settings, messages, on_chunk=None, cancelled=None, tasks=None):

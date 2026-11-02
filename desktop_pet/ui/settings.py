@@ -8,7 +8,7 @@ from pathlib import Path
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QImage, QImageReader, QPixmap
 from PyQt5.QtWidgets import (QWidget,QFormLayout,QLabel,QLineEdit,QCheckBox,QHBoxLayout,QMessageBox,QFileDialog,QScrollArea,QDialog,QGridLayout,QFrame,QSizePolicy,QApplication)
-from ..core import validate_endpoint
+from ..core import (DEFAULT_DND_END, DEFAULT_DND_START, parse_clock, validate_endpoint)
 from ..dingtalk import DingTalkError, send as dingtalk_send, validate_webhook
 from ..secure_storage import SecretStore
 from ..startup import StartupManager
@@ -51,17 +51,31 @@ class SettingsPageMixin:
         try:
             loaded = json.loads((self.root / 'settings.json').read_text(encoding='utf-8'))
             if isinstance(loaded, dict):
-                self.settings = {k: loaded[k] for k in ('base_url', 'model', 'pet_image', 'pet_image_original', 'active_session') if isinstance(loaded.get(k), str)}
+                self.settings = {k: loaded[k] for k in ('base_url', 'model', 'pet_image', 'pet_image_original',
+                                                        'active_session', 'density', 'dnd_start', 'dnd_end')
+                                 if isinstance(loaded.get(k), str)}
                 for key in ('stream', 'remember_key', 'pet_paused', 'pet_walking'):
                     if isinstance(loaded.get(key), bool):
                         self.settings[key] = loaded[key]
                 if loaded.get('pet_mode') in ('2d', '3d'):
                     self.settings['pet_mode'] = loaded['pet_mode']
+                if loaded.get('theme') in ('light', 'dark'):
+                    self.settings['theme'] = loaded['theme']
                 position = loaded.get('pet_position')
                 if isinstance(position, list) and len(position) == 2 and all(type(v) is int and abs(v) <= 100000 for v in position):
                     self.settings['pet_position'] = position
         except (OSError, ValueError):
             pass
+        for key, default in (('early_nudge', True), ('auto_postpone', False), ('dnd_enabled', True)):
+            if not isinstance(self.settings.get(key), bool):
+                self.settings[key] = default
+        for key, default in (('dnd_start', DEFAULT_DND_START), ('dnd_end', DEFAULT_DND_END)):
+            try:
+                self.settings[key] = parse_clock(self.settings.get(key) or default)
+            except ValueError:
+                self.settings[key] = default
+        if self.settings.get('density') not in ('comfortable', 'compact'):
+            self.settings['density'] = 'comfortable'
         self.migrate_pet_images(loaded)
         # 0.20 起不再使用自动生成的动作：清理旧配置与 auto-* 目录，手动导入目录保留。
         stale = [loaded.get(key) for key in ('pet_animations', 'pet_animation_backup')
@@ -254,7 +268,10 @@ class SettingsPageMixin:
         settings = self.settings if settings is None else settings
         path = self.root / 'settings.json'
         temp = path.with_suffix('.tmp')
-        allowed = ('base_url', 'model', 'pet_image', 'pet_image_original', 'pet_images', 'active_session', 'stream', 'remember_key', 'pet_position', 'pet_paused', 'pet_walking', 'pet_animations', 'pet_animation_backup', 'pet_mode')
+        allowed = ('base_url', 'model', 'pet_image', 'pet_image_original', 'pet_images', 'active_session', 'stream',
+                   'remember_key', 'pet_position', 'pet_paused', 'pet_walking', 'pet_animations',
+                   'pet_animation_backup', 'pet_mode', 'theme', 'density', 'early_nudge', 'auto_postpone',
+                   'dnd_enabled', 'dnd_start', 'dnd_end')
         temp.write_text(json.dumps({k: settings[k] for k in allowed if k in settings}, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(path)
 
