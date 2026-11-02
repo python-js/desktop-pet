@@ -217,4 +217,15 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 - 布局实测（离屏截图脚本输出）：1440 内容 760 / 单行 `158+1fr` / pad 32 / 横向滚动 0 / 纵向最大 1432；1180 内容 760 / 单行 / pad 20 / 横向滚动 0 / 纵向最大 1432；900 内容 760 / 全部折叠单列 / pad 20 / 横向滚动 0 / 纵向最大 1848。三档侧栏分别为 232/68/68，属于既有外壳断点行为。
 - 截图证据：`.artifacts/p5-shots/p5-{1440,1180,900}-{light,dark}.png`、`p5-1440-{light,dark}-bottom.png`，生成脚本 `.artifacts/capture_p5_settings.py`（临时数据目录与示例端点，无真实密钥）。逐张检查：1440/1180 左标题右控件、900 标题与控件上下排列；六张卡均有图标、标题与一行结论；按钮行左对齐，宠物图库左对齐且选中项品牌色描边；底部“数据与隐私 / 宠物形象 / 钉钉群通知”不裁切；暗色下卡片、分隔线、输入框、胶囊与文字对比正常。
 - 修复清单：① 设置页在隐藏 tab 中几何不刷新，宽度断言前先 `setCurrentIndex(3)`；② `_pref_actions` 的按钮行被 `QHBoxLayout` 均分剩余空间而居中，改为在按钮添加完成后追加 `addStretch(1)`；③ 宠物图库单列时网格列均分导致图块居中，重置列 stretch 并在末列加弹性列，使图块靠左；④ 构建期 `self.pet` 尚未创建，直接绑定 `pet.reset_position` 会崩溃，新增 `reset_pet_position()` 并以 `hasattr` 保护。
-- 阶段边界：P6 的待办编辑、提醒卡、今日规划与去背景预览仍使用 0.30 暖色内联样式，暗色下局部偏亮；“恢复默认”只覆盖主题、密度、提醒开关与免打扰时段，不含数据与凭证；开机启动受 `StartupManager.supported` 限制；真实 Windows 高 DPI/多显示器未验收。旧 Fluent 设置页以 `_LEGACY_SETTINGS_030` 注释块保留在 `ui/settings.py` 末尾。
+- 阶段边界：P6 的待办编辑、提醒卡、今日规划与去背景预览在本轮仍使用 0.30 暖色内联样式，暗色下局部偏亮（已由 P6 替换）；“恢复默认”只覆盖主题、密度、提醒开关与免打扰时段，不含数据与凭证；开机启动受 `StartupManager.supported` 限制；真实 Windows 高 DPI/多显示器未验收。旧 Fluent 设置页以 `_LEGACY_SETTINGS_030` 注释块保留在 `ui/settings.py` 末尾。
+
+## 0.31 P6 弹窗与收尾（2026-11-02）
+
+- 125 项测试通过（`QT_QPA_PLATFORM=offscreen PYTHONPATH=tests .venv/Scripts/python.exe -m unittest discover -s tests -q`）。新增 `tests/test_dialogs.py` 6 项：待办弹窗保留标题/时间/重复/钉钉字段且标题、说明对象名存在；规划弹窗回显完整快照、模型/本地两种主按钮文案；最终提醒 `snooze_button` 禁用、tooltip 含“不再重复提醒”、提示含“延期”，点击完成回调生效；普通提醒仍可延后；模拟 1920 起始的副屏可用区，提醒卡移动到副屏并夹紧在可用区内；离屏 `ImagePreview` 在纸白/夜幕下分别取 `surface` token，去背景弹窗最小尺寸不超过实际尺寸。
+- 屏幕夹紧实测（离屏单屏 800×600）：提醒卡 1×、1.25×、1.5× 下 `frameGeometry` 均完全位于可用区，分别为 `(367,297,420,276)`、`(207,177,420,276)`、`(100,107,420,266)`；副屏用例覆盖 `screenAt(anchor)` 返回第二屏时的坐标偏移。
+- DPI 几何（100/125/150%，纸白与夜幕各一组）：待办 `520×441`（最小 329×396）、规划 `650×540`（最小 208×301）、去背景 `700×510`（最小 420×472）、提醒 `420×276`（1.5× 为 `420×266`，最小 319×261）；四类弹窗所有可见标签与按钮边界均在弹窗矩形内，`clipped=none`。
+- 透明边缘：提醒卡窗口 `WA_TranslucentBackground` + 20px 内缩；截图角点 alpha=0，卡片圆角 18–21px 处 alpha 为 1–3（抗锯齿），无实色外框或白边。离屏环境不渲染真实桌面壁纸；浅/深壁纸对比依赖卡片 `surface` 与 `border` token，深色卡片在夜幕下使用 `#1F2124`。
+- 明暗与焦点：待办、规划、去背景弹窗的标题/说明/字段/提示卡由 QSS 对象名分主题着色；提醒卡标题、提示、关闭/打开按钮同样走 QSS，主题切换后即时变色。输入框聚焦显示品牌色下划线；`QPushButton` 保持 Fluent 焦点样式；`QToolButton#reminderClose/#reminderLink` 与 `QSlider` 有 1px 品牌色焦点边框。
+- 截图证据：`.artifacts/p6-shots/p6-{task,plan,cutout,reminder}-{light,dark}-{1,1.25,1.5}x.png` 共 24 张，生成脚本 `.artifacts/capture_p6_dialogs.py`（临时数据目录、合成图片与示例端点，无真实密钥）。逐张检查：眉标/标题/说明层级正确；待办时间与重复双列不截断；规划预览与底部说明不裁切；去背景双预览棋盘随主题变色、按钮右对齐；提醒卡最终提醒胶囊、逾期胶囊与“10 分钟后”禁用态清晰；暗色下卡片、提示卡、按钮与文字对比正常。
+- 修复清单：① 提醒卡主体、关闭与“打开待办”原本为固定 0.30 暖色内联样式，改用 `reminderCard`/`reminderClose`/`reminderLink` QSS 对象名，关闭与打开改用 `QToolButton` 规避 Fluent 按钮样式覆盖；② `TaskDialog` 固定 470 高导致底部留白偏多，收为 `sizeHint` 高度 441；③ `ImagePreview` 棋盘原为 `#dddddd/#ffffff` 硬编码，改为绘制时读取 token 并加 12px 圆角与描边；④ 提醒卡“打开待办”去掉旧 `QPushButton` 透明样式，焦点边框由 `QToolButton#reminderLink:focus` 统一提供。
+- 收尾：`docs/UI_DESIGN_SYSTEM.md` 的 P6 复选框、阶段表与进度行已置为完成；`docs/IMPLEMENTATION.md` 与 `docs/DESIGN.md` 增加本阶段说明。四页与弹窗在同一主题下使用同一 token 源，P0–P6 视觉重构收口。

@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QApplication, QDialog,
                              QHBoxLayout, QLabel,
                              QMainWindow, QMenu,
                              QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-                             QSystemTrayIcon, QTabWidget, QTextBrowser, QTextEdit,
+                             QSystemTrayIcon, QTabWidget, QTextEdit,
                              QVBoxLayout, QWidget, QStyle, QShortcut, QComboBox,
                              QInputDialog)
 from PyQt5.QtGui import QFont, QKeySequence
@@ -20,7 +20,7 @@ from .core import (REMIND_LIMIT, TaskStore, decode_response, in_quiet_hours,
                    local_day_bounds, parse_due, utc_now)
 from .platforms import data_directory, notify
 from . import dingtalk
-from .ui.common import button, local_time
+from .ui.common import PlanDialog, button, local_time
 from .ui.draft_card import DraftCard
 from .ui.home import HomePageMixin, Line
 from .ui.tasks import TasksPageMixin
@@ -740,23 +740,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         snapshot = daily_snapshot(self.store.pending())
         prompt = planning_prompt(snapshot)
         uses_model = bool(self.settings.get('model') and self.settings.get('base_url'))
-        dialog = QDialog(self)
-        dialog.setWindowTitle('今日规划 · 确认待办快照')
-        dialog.resize(650, 510)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-        notice = QLabel('确认后会将以下待办标题、时间及本对话最近消息发送给已配置的模型服务。'
-                        if uses_model else '当前未配置模型，确认后仅在本地整理清单。')
-        notice.setWordWrap(True)
-        layout.addWidget(notice)
-        preview = QTextBrowser()
-        preview.setPlainText(prompt)
-        layout.addWidget(preview)
-        row = QHBoxLayout()
-        button('发送给模型' if uses_model else '生成本地清单', dialog.accept, row)
-        button('取消', dialog.reject, row)
-        layout.addLayout(row)
+        dialog = PlanDialog(self, prompt, uses_model)
         if dialog.exec_() == QDialog.Accepted:
             self.submit_daily_plan(snapshot)
         dialog.deleteLater()

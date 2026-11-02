@@ -232,3 +232,12 @@ py -3 -m venv .venv
 - 数据操作：导出默认文件名 `desktop-pet-export-YYYYMMDD.json`，只导出任务/事件/会话/消息/草稿，不含设置与密钥；打开数据目录用 `QDesktopServices.openUrl()`；清空数据两次确认，先 `store.backup()` 再清表，完成后重置为默认会话并显示备份文件名。
 - 旧 Fluent `build_settings()` 以 `_LEGACY_SETTINGS_030` 注释块保留在文件末尾备查；`app.py` 新增 `settings_test` 信号、`set_theme()` 统一入口与 `resizeEvent` 中的 `apply_settings_layout()`；`tasks.py` 的密度切换回写设置页分段控件。
 - 119 项测试通过；新增 `tests/test_settings_page.py` 6 项覆盖六卡标题/结论、1440/1180 两列与 900 单列、760 宽与零横向滚动、即时落盘、恢复默认保留密钥/钉钉、连接成功/失败/空字段与脱敏、导出不含密钥、打开目录、清空两次确认与 `.bak`、密码框模式与 Key 不写 JSON。1440/1180/900 × 纸白/夜幕及底部特写截图检查通过。
+
+## 0.31 P6：弹窗与收尾
+
+- `ui/common.py`：`TaskDialog` 改为“眉标 + 标题 + 说明 + 字段标签 + 双列时间/重复 + 钉钉勾选 + 提示卡 + 右对齐按钮”的结构，保留 `title`、`date`、`repeat`、`dingtalk` 测试入口；新增 `PlanDialog`，承接原 `app.plan_today()` 的内联 `QDialog`，提供 `preview` 文本框、模型/本地两种说明和 `accept_button`。公共 `dialog_heading()`、`field_group()`、`hint_box()` 复用 token 对象名。
+- `ui/reminder.py`：卡片、标题、提示与操作全部改用 token/QSS 对象名；时间与重复改用 `StatePill`，最终提醒在头部显示“最终提醒”胶囊，底部提示“关闭后转为延期”，并保留 `snooze_button` 禁用与 tooltip。关闭和“打开待办”改用 `QToolButton`，避免 Fluent 按钮样式覆盖，主题切换即时生效。`present()` 的 `screenAt(anchor)`、可用区域夹紧和淡入位移动画保持不变。
+- `ui/cutout.py`：`ImagePreview` 棋盘改用 `surface/surface_2` 并在绘制时读取 token，新增 12px 圆角与 `border` 描边；`CutoutDialog` 改用眉标/说明、字段标签、提示卡与右对齐按钮层级，容差标签使用等宽字体，保留 worker、取消等待、`on_ready`、`result_image` 与全部测试入口。
+- `ui/theme.py`：新增对话框标题/说明/字段/提示卡/规划预览/提醒卡/提醒操作/QSlider 的 token QSS；`QSlider` 使用 4px 轨道、品牌色进度与 14px 圆形滑块，焦点状态可见。
+- `app.py`：`plan_today()` 改用 `PlanDialog`，接受/取消行为与快照提交顺序不变；移除不再使用的 `QTextBrowser` 导入。
+- 测试：新增 `tests/test_dialogs.py` 6 项，覆盖待办字段与标题对象名、规划预览与按钮文案、最终提醒禁用延后/提示转延期/屏幕夹紧、普通提醒仍可延后、去背景棋盘随主题变色与弹窗尺寸。全量 125 项通过。

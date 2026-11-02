@@ -88,6 +88,30 @@ QLabel#eyebrow { color:$ink_3; font-size:10px; font-weight:600; }
 QLabel#winbarTitle { color:$ink; font-size:12px; font-weight:600; }
 QLabel#winbarContext { color:$ink_3; font-size:12px; }
 QLabel#versionLabel { color:$ink_4; font-size:10px; font-family:"Cascadia Mono","Consolas"; }
+QLabel#dialogEyebrow { color:$ink_3; font-size:10px; font-weight:600; }
+QLabel#dialogTitle { color:$ink; font-size:19px; font-weight:700; }
+QLabel#dialogSubtitle { color:$ink_3; font-size:12px; }
+QLabel#fieldLabel { color:$ink_2; font-size:12px; font-weight:600; }
+QLabel#dialogHintText { color:$ink_3; font-size:12px; }
+QFrame#dialogHint { background:$surface_2; border:1px solid $border; border-radius:10px; }
+QTextBrowser#planPreview {
+ border:1px solid $border; border-radius:12px; background:$surface_2; color:$ink_2;
+ padding:12px; font-family:"Cascadia Mono","Consolas"; font-size:12px;
+}
+QLabel#reminderKicker { color:$brand_press; font-size:11px; font-weight:600; }
+QLabel#reminderTitle { color:$ink; font-size:20px; font-weight:600; }
+QLabel#reminderHint { color:$ink_3; font-size:12px; }
+QFrame#reminderCard { background:$surface; border:1px solid $border; border-radius:20px; }
+QToolButton#reminderClose {
+ background:transparent; border:0; color:$ink_3; font-size:18px; border-radius:8px; padding:0;
+}
+QToolButton#reminderClose:hover { background:$brand_wash; color:$brand_press; }
+QToolButton#reminderClose:focus { border:1px solid $brand; }
+QToolButton#reminderLink {
+ background:transparent; border:0; color:$ink_3; padding:8px 10px; font-size:12px; border-radius:8px;
+}
+QToolButton#reminderLink:hover { color:$brand_press; }
+QToolButton#reminderLink:focus { border:1px solid $brand; }
 QTabWidget::pane { border:0; background:transparent; }
 QPushButton { background:$surface; border:1px solid $border; border-radius:10px; padding:8px 14px; color:$ink_2; }
 QPushButton:hover { background:$surface_2; border-color:$border_strong; color:$ink; }
@@ -116,6 +140,14 @@ QListWidget#taskList { background:transparent; border:0; padding:0; outline:0; }
 QListWidget#taskList::item { border:0; border-radius:14px; padding:16px; margin:5px 2px; background:$surface; }
 QListWidget#taskList::item:hover { background:$surface_2; }
 QListWidget#taskList::item:selected { background:$brand_wash; color:$ink; }
+QSlider::groove:horizontal { height:4px; background:$surface_3; border-radius:2px; }
+QSlider::sub-page:horizontal { background:$brand; border-radius:2px; }
+QSlider::handle:horizontal {
+ width:14px; height:14px; margin:-6px 0; background:$surface;
+ border:2px solid $brand; border-radius:8px;
+}
+QSlider::handle:horizontal:hover { border-color:$brand_hover; }
+QSlider:focus { border:1px solid $brand; border-radius:8px; }
 QScrollArea { border:0; background:transparent; }
 QScrollArea > QWidget > QWidget { background:transparent; }
 QScrollBar:vertical { border:0; background:transparent; width:6px; margin:4px 0; }

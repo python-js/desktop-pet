@@ -3,12 +3,13 @@ from datetime import datetime, timedelta
 
 from PyQt5.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QParallelAnimationGroup, Qt
 from PyQt5.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel,
-                             QPushButton, QVBoxLayout)
+                             QToolButton, QVBoxLayout)
 
 from ..core import REMIND_LIMIT, parse_due
 from ..recurrence import REPEAT_LABELS
 from .common import button
-from .theme import ACCENT, ACCENT_DARK, ACCENT_SOFT, BORDER, INK, MUTED, add_soft_shadow, application_icon
+from .components import StatePill
+from .theme import add_soft_shadow, application_icon
 
 
 def friendly_time(value, now=None):
@@ -34,14 +35,14 @@ class ReminderDialog(QDialog):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowTitle('待办提醒')
         self.setFixedWidth(420)
+        self.final = final
         self._animated = False
         self._motion = None
         self.resolved = False
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(22, 22, 22, 22)
+        outer.setContentsMargins(20, 20, 20, 20)
         card = QFrame()
         card.setObjectName('reminderCard')
-        card.setStyleSheet(f'QFrame#reminderCard {{ background:#FFFFFF; border:1px solid {BORDER}; border-radius:20px; }}')
         add_soft_shadow(card)
         outer.addWidget(card)
         body = QVBoxLayout(card)
@@ -55,46 +56,42 @@ class ReminderDialog(QDialog):
         icon.setFixedSize(34, 34)
         header.addWidget(icon)
         kicker = QLabel('待办提醒')
-        kicker.setStyleSheet(f'color:{ACCENT_DARK};font-size:11px;font-weight:600;background:transparent;')
+        kicker.setObjectName('reminderKicker')
         header.addWidget(kicker)
+        if final:
+            header.addWidget(StatePill('最终提醒', 'over', 'alert'))
         header.addStretch()
-        close = QPushButton('×')
+        close = QToolButton()
+        close.setObjectName('reminderClose')
+        close.setText('×')
         close.setCursor(Qt.PointingHandCursor)
         close.setFixedSize(28, 28)
         close.setToolTip('关闭提醒')
-        close.setStyleSheet('QPushButton {background:transparent;border:0;color:#A89D91;font-size:18px;border-radius:8px;}'
-                            f'QPushButton:hover {{background:#FFF3ED;color:{ACCENT_DARK};}}')
         close.clicked.connect(self.reject)
         header.addWidget(close)
         body.addLayout(header)
 
         title = QLabel(task['title'])
+        title.setObjectName('reminderTitle')
         title.setTextFormat(Qt.PlainText)
         title.setWordWrap(True)
-        title.setStyleSheet(f'color:{INK};font-size:20px;font-weight:600;background:transparent;')
         body.addWidget(title)
 
         chips = QHBoxLayout()
         chips.setSpacing(8)
         time_text, overdue = friendly_time(task['due_at'])
-        time_chip = QLabel(time_text)
-        time_chip.setStyleSheet(
-            f'background:{"#FDECEA" if overdue else ACCENT_SOFT};'
-            f'color:{"#B4432F" if overdue else ACCENT_DARK};'
-            'border-radius:9px;padding:5px 10px;font-size:12px;font-weight:600;')
-        chips.addWidget(time_chip)
+        chips.addWidget(StatePill(time_text, 'over' if overdue else 'today', 'clock'))
         repeat = task.get('repeat_rule', 'none')
         if repeat != 'none':
-            repeat_chip = QLabel(REPEAT_LABELS.get(repeat, '不重复'))
-            repeat_chip.setStyleSheet('background:#F6F1EA;color:#7A6E62;border-radius:9px;padding:5px 10px;font-size:12px;')
-            chips.addWidget(repeat_chip)
+            chips.addWidget(StatePill(REPEAT_LABELS.get(repeat, '不重复'), 'next', 'sync'))
         chips.addStretch()
         body.addLayout(chips)
 
-        hint = QLabel(f'已提醒 {REMIND_LIMIT} 次，关闭后将标记为延期，不再提醒。' if final
-                      else '关闭后仍可在待办页继续处理。')
-        hint.setStyleSheet(f'color:{MUTED};font-size:12px;background:transparent;')
-        body.addWidget(hint)
+        self.hint = QLabel(f'已提醒 {REMIND_LIMIT} 次，这是最后一次；关闭后转为延期，不再提醒。' if final
+                           else '关闭后仍可在待办页继续处理。')
+        self.hint.setObjectName('reminderHint')
+        self.hint.setWordWrap(True)
+        body.addWidget(self.hint)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -104,10 +101,10 @@ class ReminderDialog(QDialog):
         if final:
             self.snooze_button.setEnabled(False)
             self.snooze_button.setToolTip(f'已提醒 {REMIND_LIMIT} 次，不再重复提醒')
-        open_button = QPushButton('打开待办')
+        open_button = QToolButton()
+        open_button.setObjectName('reminderLink')
+        open_button.setText('打开待办')
         open_button.setCursor(Qt.PointingHandCursor)
-        open_button.setStyleSheet(f'QPushButton {{background:transparent;border:0;color:{MUTED};padding:8px 10px;font-size:12px;}}'
-                                  f'QPushButton:hover {{color:{ACCENT_DARK};}}')
         open_button.clicked.connect(lambda checked=False: self._resolve(on_open))
         actions.addWidget(open_button)
         actions.addStretch()
