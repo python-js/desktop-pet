@@ -262,3 +262,13 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 - 完成待办探针（`.artifacts/stream_probe.py`）：待办页 3 个批次（+16/+32/+63ms，46/47/14 次，每批整窗层仅 3 次小区域重绘）；首页 2 个批次（+31/+47ms，81/15 次）。此前同一变化会分多帧逐块闪现。
 - 截图证据：`.artifacts/flicker-chat-light.png`、`.artifacts/flicker-chat-dark.png`（脚本 `.artifacts/flicker_shots.py`，临时数据目录）：流式结束后纸白/夜幕下气泡、正文、输入卡与右栏完整，无白带、无空白页。离屏环境不产生 `QEvent.Paint`，闪烁判断以真实窗口探针的批次与重绘次数为准。
 - 历史说明：本轮试过在 `render_stream()` 中用 `frozen_updates(history.content)` 冻结历史区，真实窗口反而升到 1140 次/44 批次（冻结使整块 content 每帧重绘），已放弃；`append_plain()` 内同步 `_apply_height()` 同样让绘制回升（1278/67），一并撤销。两项仅作历史备查。
+
+## 0.31 联网搜索：Tavily（2026-11-03）
+
+- 147 项测试通过（`PYTHONPATH="tests;." QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`，约 99s），较上一轮新增 15 项。
+- 客户端测试 `tests/test_websearch.py` 8 项：意图正例（“帮我查一下最新金价”“今天天气怎么样”）与反例（“明天15:00提醒我交报告”“帮我记个待办”“你好呀”）；请求头为 `Bearer`、body 含 `search_depth=basic/max_results=5/include_answer`、query 原样；结果清洗丢弃非 http(s) 与非 dict、标题回退 URL、正文截断 500 字、最多 5 条；60 秒缓存命中不再发请求；401/403、429、432–434、400 与超时分别映射中文文案；空结果不报错；取消与空 Key 抛 `WebSearchError`；`format_context` 含本地时间、编号来源与“不得改变”限制；`ask()` 仅在传入 `search_context` 时把资料追加到 system prompt。
+- 界面测试 `tests/test_websearch_ui.py` 3 项：真实问题触发检索并在助手行显示来源条（`https://example.com/gold` 可见、正文正常）；任务措辞不触发检索且不注入上下文；无 Key 时开关禁用并取消勾选，手动关闭写入 `settings.json`。
+- 其余新增：`tests/test_windows_settings.py` 的 `test_tavily_secret_roundtrip`（DPAPI 保存/读取/删除）；`tests/test_chat_widgets.py` 的 `test_sources_only_keep_web_links_and_follow_theme`（过滤非 http(s)、最多 5 条、链接色随主题）；`tests/test_settings_page.py` 新增卡标题断言与 `test_tavily_key_is_encrypted_and_toggle_persisted`（掩码、`settings.json` 不含明文、开关落盘）。
+- 截图证据：`.artifacts/websearch-shots/websearch-settings-{1440,900}-{light,dark}.png`、`websearch-chat-1180-{light,dark}.png`，生成脚本 `.artifacts/websearch_shots.py`（临时数据目录与示例端点，无真实 Key）。逐张检查：设置页“联网搜索”卡在 1440/900 与纸白/夜幕下布局正常；聊天页联网开关为激活态、来源条显示两条链接、助手正文内联链接在夜幕下为橙色（`#ee8454`），无蓝链残留。
+- 真实调用边界：本轮未使用真实 Tavily Key 发请求，联网结果质量、配额与 RPM 未实测；代码路径以 mock 的 HTTP 响应与错误码覆盖，真实调用需在“偏好设置 → 联网搜索”填写 Key 后点“测试连接”验证。
+- 历史说明：暗色 Markdown 链接最初固定为蓝色，`palette` 与 document default stylesheet 对 `setMarkdown` 无效；最终在 `MessageText.setMarkdown()` 后逐字符 `mergeCharFormat` 重着色，来源条同步改用 `brand_hover`。

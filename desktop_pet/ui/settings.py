@@ -16,6 +16,7 @@ from ..core import (DEFAULT_DND_END, DEFAULT_DND_START, parse_clock, validate_en
 from ..dingtalk import DingTalkError, send as dingtalk_send, validate_webhook
 from ..secure_storage import SecretStore
 from ..startup import StartupManager
+from .. import websearch
 from . import icons, tokens as T
 from .common import button, local_time
 from .components import ElidedLabel, Panel, Segmented, StatePill
@@ -392,7 +393,8 @@ class SettingsPageMixin:
         except (OSError, ValueError):
             pass
         for key, default in (('early_nudge', True), ('sound_enabled', True),
-                             ('auto_postpone', False), ('dnd_enabled', True)):
+                             ('auto_postpone', False), ('dnd_enabled', True),
+                             ('web_search_enabled', True)):
             if not isinstance(self.settings.get(key), bool):
                 self.settings[key] = default
         for key, default in (('dnd_start', DEFAULT_DND_START), ('dnd_end', DEFAULT_DND_END)):
@@ -423,6 +425,11 @@ class SettingsPageMixin:
                     self.settings_warning = '没有找到此服务的安全密钥，请重新输入。'
             except (OSError, ValueError):
                 self.settings_warning = '安全密钥未能恢复，请重新输入；原文件未自动删除。'
+        self.settings['tavily_key'] = ''
+        try:
+            self.settings['tavily_key'] = self.secret_store.load_tavily()
+        except (OSError, ValueError):
+            self.settings_warning += ' Tavily 密钥未能恢复，请重新输入。'
         self.dingtalk_webhook = ''
         self.dingtalk_secret = ''
         try:
@@ -561,6 +568,29 @@ class SettingsPageMixin:
         self.settings_test_status = _pref_text(10, 'ink_3', wrap=True)
         self.settings_test_status.setText('尚未测试连接。')
         row.add(self.settings_test_status)
+        card.add_row(row)
+        content.addWidget(card)
+
+        card = PrefCard('search', '联网搜索',
+                        '接入 Tavily 查实时资料；只发送当前问题，不发送对话历史和待办。')
+        row = PrefRow('Tavily API Key', '在 tavily.com 创建，形如 tvly-…')
+        self.tavily_key = QLineEdit(self.settings.get('tavily_key', ''))
+        self.tavily_key.setEchoMode(QLineEdit.Password)
+        self.tavily_key.setPlaceholderText('仅用于 Tavily 搜索')
+        self.tavily_key.setMinimumWidth(0)
+        row.add(self.tavily_key)
+        self.web_search_enabled = CheckLine('自动联网查资料',
+                                            '命中查资料类问题且已配置密钥时先搜索；每次消耗 1 credit。',
+                                            self.settings.get('web_search_enabled', True))
+        row.add(self.web_search_enabled)
+        actions, action_row = _pref_actions()
+        self.save_web_button = button('保存', self.save_web_search_settings, action_row, primary=True)
+        self.test_web_button = button('测试连接', self.test_websearch, action_row)
+        row.add(actions)
+        self.websearch_status = _pref_text(10, 'ink_3', wrap=True)
+        self.websearch_status.setText('尚未配置 Tavily 密钥；配置后默认自动联网。' if not
+                                      self.settings.get('tavily_key') else 'Tavily 密钥已载入。')
+        row.add(self.websearch_status)
         card.add_row(row)
         content.addWidget(card)
 
@@ -918,6 +948,61 @@ class SettingsPageMixin:
         self.settings_test_status.setText(message)
         self.statusBar().showMessage(message, 8000)
 
+    def save_web_search_settings(self):
+        key = self.tavily_key.text().strip()
+        if len(key.encode('utf-8')) > 8192:
+            QMessageBox.warning(self, '设置未保存', 'Tavily 密钥过长，请检查后重试。')
+            return
+        try:
+            if key:
+                self.secret_store.save_tavily(key)
+            else:
+                self.secret_store.remove_tavily()
+            candidate = dict(self.settings, tavily_key=key,
+                             web_search_enabled=self.web_search_enabled.isChecked())
+            self.persist_settings(candidate)
+            self.settings = candidate
+            if hasattr(self, 'update_web_search_ui'):
+                self.update_web_search_ui()
+            message = ('联网搜索设置已保存；密钥由当前 Windows 用户加密保存。' if key
+                       else '已清除 Tavily 密钥，联网搜索关闭。')
+            self.websearch_status.setText(message)
+            _pref_color(self.websearch_status, 'ink_3')
+            self.statusBar().showMessage(message, 6000)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, '设置未保存', str(exc))
+
+    def test_websearch(self):
+        key = self.tavily_key.text().strip()
+        if not key:
+            _pref_color(self.websearch_status, 'alert')
+            self.websearch_status.setText('请先填写 Tavily API Key。')
+            return
+        if hasattr(self, 'test_web_button'):
+            self.test_web_button.setEnabled(False)
+        _pref_color(self.websearch_status, 'ink_3')
+        self.websearch_status.setText('正在测试 Tavily 连接（会消耗 1 credit）…')
+
+        def work():
+            try:
+                ms = websearch.test_connection(key)
+                ok, message = True, f'联网搜索连接成功：{ms} 毫秒。'
+            except (OSError, ValueError) as exc:
+                ok, message = False, '联网搜索测试失败：' + str(exc)
+            try:
+                self.websearch_test.emit(ok, message)
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_websearch_test(self, ok, message):
+        if hasattr(self, 'test_web_button'):
+            self.test_web_button.setEnabled(True)
+        _pref_color(self.websearch_status, 'calm' if ok else 'alert')
+        self.websearch_status.setText(message)
+        self.statusBar().showMessage(message, 8000)
+
     def export_settings_data(self):
         name = f'desktop-pet-export-{datetime.now():%Y%m%d}.json'
         path, _ = QFileDialog.getSaveFileName(self, '导出数据', str(Path.home() / name),
@@ -981,7 +1066,8 @@ class SettingsPageMixin:
         allowed = ('base_url', 'model', 'pet_image', 'pet_image_original', 'pet_images', 'active_session', 'stream',
                    'remember_key', 'pet_position', 'pet_paused', 'pet_walking', 'pet_animations',
                    'pet_animation_backup', 'pet_mode', 'theme', 'density', 'early_nudge', 'sound_enabled',
-                   'auto_postpone', 'dnd_enabled', 'dnd_start', 'dnd_end', 'sidebar_collapsed')
+                   'auto_postpone', 'dnd_enabled', 'dnd_start', 'dnd_end', 'sidebar_collapsed',
+                   'web_search_enabled')
         temp.write_text(json.dumps({k: settings[k] for k in allowed if k in settings}, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(path)
 

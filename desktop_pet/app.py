@@ -19,7 +19,7 @@ from .assistant import ask, local_reply, plain_text, reply_preview, RequestCance
 from .core import (REMIND_LIMIT, TaskStore, decode_response, in_quiet_hours,
                    local_day_bounds, parse_due, utc_now)
 from .platforms import data_directory, notify
-from . import dingtalk
+from . import dingtalk, websearch
 from .ui.common import PlanDialog, button, frozen_updates, local_time
 from .ui.draft_card import DraftCard
 from .ui.home import HomePageMixin, Line
@@ -54,11 +54,16 @@ class AssistantWorker(QThread):
     failed = pyqtSignal(str)
     chunk = pyqtSignal(str)
     stopped = pyqtSignal()
+    search_started = pyqtSignal()
+    searched = pyqtSignal(object)
+    search_failed = pyqtSignal(str)
 
-    def __init__(self, settings, messages, tasks, parent):
+    def __init__(self, settings, messages, tasks, parent, web_query=''):
         super().__init__(parent)
         self.settings, self.messages = dict(settings), messages
         self.tasks = tasks
+        self.web_query = web_query
+        self.searching = False
         self.cancel_event = threading.Event()
 
     def cancel(self):
@@ -66,8 +71,29 @@ class AssistantWorker(QThread):
 
     def run(self):
         try:
-            result = ask(self.settings, self.messages, self.chunk.emit,
-                         self.cancel_event.is_set, self.tasks)
+            context = ''
+            if self.web_query and self.settings.get('tavily_key'):
+                self.searching = True
+                self.search_started.emit()
+                try:
+                    found = websearch.tavily_search(self.settings['tavily_key'], self.web_query,
+                                                    self.cancel_event.is_set)
+                    if self.cancel_event.is_set():
+                        raise RequestCancelled()
+                    context = websearch.format_context(found)
+                    self.searched.emit(found['results'])
+                except RequestCancelled:
+                    raise
+                except ValueError as exc:
+                    self.search_failed.emit(str(exc))
+                finally:
+                    self.searching = False
+            if context:
+                result = ask(self.settings, self.messages, self.chunk.emit,
+                             self.cancel_event.is_set, self.tasks, search_context=context)
+            else:
+                result = ask(self.settings, self.messages, self.chunk.emit,
+                             self.cancel_event.is_set, self.tasks)
             if self.cancel_event.is_set():
                 self.stopped.emit()
             else:
@@ -86,6 +112,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
     dingtalk_result = pyqtSignal(bool, str)
     dingtalk_test = pyqtSignal(bool, str)
     settings_test = pyqtSignal(bool, str)
+    websearch_test = pyqtSignal(bool, str)
 
     def __init__(self, secret_store=None, startup_manager=None):
         super().__init__()
@@ -103,6 +130,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.error_row = None
         self.request_model = ''
         self.request_started = None
+        self._search_sources = []
         self.exit_pending = False
         self.last_deleted = None
         self.reminders = {}
@@ -115,6 +143,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             apply_theme(QApplication.instance(), self.theme)
         self.dingtalk_result.connect(self.show_dingtalk_result)
         self.settings_test.connect(self.on_settings_test)
+        self.websearch_test.connect(self.on_websearch_test)
         session_ids = {s['id'] for s in self.store.sessions()}
         self.active_session = self.settings.get('active_session', 'default')
         if self.active_session not in session_ids:
@@ -500,6 +529,10 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         bar.setSpacing(8)
         self.model_chip = ModelChip()
         bar.addWidget(self.model_chip)
+        self.web_toggle = IconButton('search', '联网搜索：开', self.composer)
+        self.web_toggle.setCheckable(True)
+        self.web_toggle.toggled.connect(self.toggle_web_search)
+        bar.addWidget(self.web_toggle)
         self.chat_status = QLabel('')
         self.chat_status.setWordWrap(False)
         bar.addWidget(self.chat_status, 1)
@@ -540,6 +573,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         shell.addWidget(self.chat_rail)
 
         self._chat_rail_open = False
+        self.update_web_search_ui()
         self.refresh_chat_theme()
         self.apply_chat_layout(self.width(), force=True)
         self.refresh_chat_rail()
@@ -601,6 +635,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.draft_widget.setStyleSheet('background:transparent;')
         self.composer.refresh_theme()
         self.regenerate_button.refresh_theme()
+        self.web_toggle.refresh_theme()
         self.history.refresh_theme()
         for index in range(self.drafts.count()):
             card = self.drafts.itemAt(index).widget()
@@ -615,6 +650,50 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             return
         configured = bool(self.settings.get('model') and self.settings.get('base_url'))
         self.model_chip.set_text(self.settings.get('model') if configured else '本地规则', configured)
+
+    def web_search_ready(self):
+        return bool(self.settings.get('tavily_key'))
+
+    def update_web_search_ui(self):
+        if not hasattr(self, 'web_toggle'):
+            return
+        ready = self.web_search_ready()
+        enabled = ready and bool(self.settings.get('web_search_enabled', True))
+        self.web_toggle.blockSignals(True)
+        self.web_toggle.setEnabled(ready)
+        self.web_toggle.setChecked(enabled)
+        self.web_toggle.blockSignals(False)
+        if not ready:
+            tip = '联网搜索：未配置 Tavily 密钥，请在设置中填写'
+        elif enabled:
+            tip = '联网搜索：开（点击关闭）'
+        else:
+            tip = '联网搜索：关（点击开启）'
+        self.web_toggle.setToolTip(tip)
+
+    def toggle_web_search(self, checked):
+        if not self.web_search_ready():
+            self.update_web_search_ui()
+            return
+        self.settings['web_search_enabled'] = bool(checked)
+        self.persist_settings()
+        self.update_web_search_ui()
+        self.statusBar().showMessage('联网搜索已开启；命中查资料类问题时会先搜索。' if checked
+                                     else '联网搜索已关闭，模型只依据对话内容回答。', 5000)
+
+    def on_search_started(self):
+        if self.request_session == self.active_session:
+            self.chat_status.setText('正在搜索资料…')
+
+    def on_searched(self, sources):
+        self._search_sources = list(sources or [])
+        if self.request_session == self.active_session:
+            self.update_request_status()
+
+    def on_search_failed(self, message):
+        if self.request_session == self.active_session:
+            self.chat_status.setText(message)
+        self.statusBar().showMessage(message + '，已按离线回答。', 8000)
 
     def refresh_chat_rail(self):
         if not hasattr(self, 'chat_rail'):
@@ -725,6 +804,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         if busy:
             if self.worker.cancel_event.is_set():
                 self.chat_status.setText('正在停止，等待连接释放（最长约45秒）')
+            elif getattr(self.worker, 'searching', False):
+                self.chat_status.setText('正在搜索资料…')
             else:
                 self.chat_status.setText('正在回复…' if self.request_session == self.active_session else '其他对话正在回复，可继续浏览和编辑')
         else:
@@ -779,23 +860,30 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.retry_by_session.pop(self.active_session, None)
         self.retry_button.hide()
         if self.settings.get('model') and self.settings.get('base_url'):
-            self.start_request(self.store.messages(20, self.active_session))
+            self.start_request(self.store.messages(20, self.active_session), web_query='')
         else:
             self.on_reply(local_plan(snapshot))
             self.update_request_status()
 
-    def start_request(self, messages):
+    def start_request(self, messages, web_query=None):
         self.request_session = self.active_session
         self.task_choice.pop(self.request_session, None)
         self.stream_content = ''
         self._stream_rendered = ''
+        self._search_sources = []
         self.stream_row = None
         self.error_row = None
         configured = bool(self.settings.get('model') and self.settings.get('base_url'))
         self.request_model = self.settings.get('model') if configured else ''
         self.request_started = time.monotonic()
+        if web_query is None:
+            last = next((m.get('content', '') for m in reversed(messages)
+                         if m.get('role') == 'user'), '')
+            web_query = (last if (self.web_search_ready()
+                                  and self.settings.get('web_search_enabled', True)
+                                  and websearch.wants_web_search(last)) else '')
         tasks = [dict(row) for row in self.store.pending()]
-        self.worker = AssistantWorker(self.settings, messages, tasks, self)
+        self.worker = AssistantWorker(self.settings, messages, tasks, self, web_query)
         self.stream_timer.start()
         self.update_request_status()
         if self.request_session == self.active_session:
@@ -807,6 +895,9 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.worker.failed.connect(self.on_error)
         self.worker.chunk.connect(self.on_chunk)
         self.worker.stopped.connect(self.on_stopped)
+        self.worker.search_started.connect(self.on_search_started)
+        self.worker.searched.connect(self.on_searched)
+        self.worker.search_failed.connect(self.on_search_failed)
         self.worker.finished.connect(self.request_finished)
         self.worker.start()
 
@@ -866,6 +957,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.request_session = None
         self.stream_content = ''
         self.stream_row = None
+        self._search_sources = []
         self.request_model = ''
         self.request_started = None
         self.update_request_status()
@@ -1046,6 +1138,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             else:
                 row = self.history.append_message('assistant', reply)
                 row.set_meta(self._reply_meta())
+            if self._search_sources:
+                self.history.set_sources(row, self._search_sources)
         if errors:
             note = '部分建议未采用：' + '；'.join(errors)
             self.store.add_message('assistant', note, session_id)

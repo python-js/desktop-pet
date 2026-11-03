@@ -96,6 +96,29 @@ class MessageWidgetTests(unittest.TestCase):
             history.deleteLater()
             QT_APP.processEvents()
 
+    def test_sources_only_keep_web_links_and_follow_theme(self):
+        history = MessageHistory()
+        history.resize(700, 400)
+        history.show()
+        try:
+            row = history.append_message('assistant', '金价小幅上涨。')
+            history.set_sources(row, [
+                {'title': '<b>金价</b>', 'url': 'https://example.com/gold'},
+                {'title': '本地文件', 'url': 'file:///tmp/secret'},
+                {'title': '', 'url': 'http://example.org/a'},
+            ])
+            QTest.qWait(60)
+            self.assertTrue(row.sources.isVisible())
+            self.assertEqual(len(row._sources), 2)
+            self.assertIn('https://example.com/gold', row.sources.text())
+            self.assertIn('&lt;b&gt;金价&lt;/b&gt;', row.sources.text())
+            self.assertNotIn('file:///tmp/secret', row.sources.text())
+            self.assertIn('http://example.org/a', row.sources.text())
+        finally:
+            history.close()
+            history.deleteLater()
+            QT_APP.processEvents()
+
     def test_stream_append_matches_full_render(self):
         history = MessageHistory()
         history.resize(700, 400)

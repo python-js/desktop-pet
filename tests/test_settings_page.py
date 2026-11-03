@@ -58,7 +58,7 @@ class SettingsPageTests(unittest.TestCase):
 
         cards = window.settings_page.findChildren(PrefCard)
         self.assertEqual([card.title_label.text() for card in cards],
-                         ['模型与对话', '提醒与免打扰', '外观与密度', '数据与隐私', '宠物形象', '钉钉群通知'])
+                         ['模型与对话', '联网搜索', '提醒与免打扰', '外观与密度', '数据与隐私', '宠物形象', '钉钉群通知'])
         self.assertTrue(all(card.conclusion.text().strip() for card in cards))
         self.assertEqual(window.settings_content.width(), 760)
         self.assertEqual(window.settings_scroll.horizontalScrollBar().maximum(), 0)
@@ -211,13 +211,32 @@ class SettingsPageTests(unittest.TestCase):
     def test_secret_fields_are_masked_and_not_written(self):
         from PyQt5.QtWidgets import QLineEdit
         window = self.window
-        for field in (window.key, window.dingtalk_webhook_input, window.dingtalk_secret_input):
+        for field in (window.key, window.tavily_key, window.dingtalk_webhook_input,
+                      window.dingtalk_secret_input):
             self.assertEqual(field.echoMode(), QLineEdit.Password)
         window.key.setText('plain-key')
         window.remember_key.setChecked(False)
         window.save_settings()
         self.assertNotIn('plain-key', (Path(self.temp.name) / 'settings.json').read_text(encoding='utf-8'))
         self.assertEqual(window.settings['api_key'], 'plain-key')
+
+    def test_tavily_key_is_encrypted_and_toggle_persisted(self):
+        window = self.window
+        window.tavily_key.setText('tvly-synthetic')
+        window.web_search_enabled.setChecked(True)
+        window.save_web_search_settings()
+        settings_text = (Path(self.temp.name) / 'settings.json').read_text(encoding='utf-8')
+        self.assertNotIn('tvly-synthetic', settings_text)
+        self.assertNotIn('tavily_key', settings_text)
+        self.assertTrue(self.saved()['web_search_enabled'])
+        self.assertNotIn(b'tvly-synthetic',
+                         (Path(self.temp.name) / 'tavily-key.dpapi').read_bytes())
+        self.assertEqual(window.settings['tavily_key'], 'tvly-synthetic')
+        self.assertTrue(window.web_toggle.isChecked())
+        window.web_search_enabled.setChecked(False)
+        window.save_web_search_settings()
+        self.assertFalse(self.saved()['web_search_enabled'])
+        self.assertFalse(window.web_toggle.isChecked())
 
 
 if __name__ == '__main__':

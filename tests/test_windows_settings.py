@@ -69,6 +69,18 @@ class WindowsAdapterTests(unittest.TestCase):
             store.remove_dingtalk()
             self.assertEqual(store.load_dingtalk(), ('', ''))
 
+    def test_tavily_secret_roundtrip(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = SecretStore(folder, synthetic_protector, supported=True)
+            self.assertEqual(store.load_tavily(), '')
+            store.save_tavily('tvly-synthetic')
+            self.assertNotIn(b'tvly-synthetic', (Path(folder) / 'tavily-key.dpapi').read_bytes())
+            self.assertEqual(store.load_tavily(), 'tvly-synthetic')
+            with self.assertRaises(SecretStorageError):
+                store.save_tavily('')
+            store.remove_tavily()
+            self.assertEqual(store.load_tavily(), '')
+
     def test_secret_failure_preserves_previous_file_without_plaintext_fallback(self):
         with tempfile.TemporaryDirectory() as folder:
             store = SecretStore(folder, synthetic_protector, supported=True)

@@ -138,13 +138,14 @@ class IconButton(QPushButton):
 
     def paintEvent(self, event):
         t = tokens()
+        active = self.isChecked()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        if self._hover:
+        if self._hover or active:
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(t.surface_2))
+            painter.setBrush(QColor(t.brand_wash if active else t.surface_2))
             painter.drawRoundedRect(QRectF(self.rect()), 8, 8)
-        color = t.ink if self._hover else t.ink_3
+        color = t.brand if active else (t.ink if self._hover else t.ink_3)
         if not self.isEnabled():
             color = t.ink_4
         painter.drawPixmap(QPointF((self.width() - 16) / 2, (self.height() - 16) / 2),

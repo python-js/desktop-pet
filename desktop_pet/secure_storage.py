@@ -42,6 +42,7 @@ class SecretStore:
     MAGIC = b'DesktopPetDPAPI1\n'
     API_PATH = 'api-key.dpapi'
     DINGTALK_PATH = 'dingtalk.dpapi'
+    TAVILY_PATH = 'tavily-key.dpapi'
 
     def __init__(self, root, protector=None, supported=None):
         self.root = Path(root)
@@ -116,3 +117,19 @@ class SecretStore:
 
     def remove_dingtalk(self):
         (self.root / self.DINGTALK_PATH).unlink(missing_ok=True)
+
+    def save_tavily(self, key):
+        if not isinstance(key, str) or not key or len(key.encode('utf-8')) > 8192:
+            raise SecretStorageError('请输入有效的 Tavily 密钥，长度不得超过8192字节。')
+        self._write(self.TAVILY_PATH, {'key': key}, 'Tavily 密钥')
+
+    def load_tavily(self):
+        payload = self._read(self.TAVILY_PATH, 'Tavily 密钥')
+        if payload is None:
+            return ''
+        if not isinstance(payload.get('key'), str):
+            raise SecretStorageError('无法恢复 Tavily 密钥，请重新输入；原文件未自动删除。')
+        return payload['key']
+
+    def remove_tavily(self):
+        (self.root / self.TAVILY_PATH).unlink(missing_ok=True)

@@ -1,8 +1,9 @@
 """对话线程：token 气泡、事件行、流式占位与输入卡。"""
+import html
 import math
 
 from PyQt5.QtCore import QRectF, QSize, Qt, QTimer
-from PyQt5.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPen, QTextBlockFormat,
+from PyQt5.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPalette, QPen, QTextBlockFormat,
                          QTextCursor, QTextDocument, QTextOption)
 from PyQt5.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QPushButton,
                              QSizePolicy, QTextBrowser, QVBoxLayout, QWidget)
@@ -132,6 +133,11 @@ class MessageText(QTextBrowser):
         fill = t.brand_wash if user else t.surface
         self.setStyleSheet(f'QTextBrowser{{background:{fill};border:0;padding:0;color:{color};'
                            f'font-family:"{T.FONT_UI}";font-size:13px;}}')
+        palette = self.palette()
+        palette.setColor(QPalette.Link, QColor(t.brand_hover))
+        palette.setColor(QPalette.LinkVisited, QColor(t.brand_hover))
+        self.setPalette(palette)
+        self.document().setDefaultStyleSheet(f'a{{color:{t.brand_hover};}}')
 
     def setPlainText(self, text):
         super().setPlainText(text)
@@ -157,11 +163,24 @@ class MessageText(QTextBrowser):
         font.setPixelSize(13)
         document.setDefaultFont(font)
         document.setMarkdown(text, QTextDocument.MarkdownDialectGitHub)
+        # Markdown 解析会把链接写死成 #0000ff，需按当前主题重新着色。
+        self._recolor_links()
         # Markdown 解析会丢弃裸露的 HTML 块，整段变成空文档时退回纯文本，避免内容消失。
         if text.strip() and not document.toPlainText().strip():
             self.setPlainText(text)
             return
         self.fit_height()
+
+    def _recolor_links(self):
+        color = QColor(tokens().brand_hover)
+        cursor = QTextCursor(self.document())
+        cursor.movePosition(QTextCursor.Start)
+        while cursor.movePosition(QTextCursor.NextCharacter, QTextCursor.KeepAnchor):
+            fmt = cursor.charFormat()
+            if fmt.isAnchor() and fmt.anchorHref():
+                fmt.setForeground(color)
+                cursor.mergeCharFormat(fmt)
+            cursor.clearSelection()
 
     def natural_width(self):
         font = QFont(T.FONT_UI)
@@ -212,6 +231,13 @@ class MessageRow(QWidget):
         self.text = MessageText('', self.bubble)
         self.text.refresh_theme(self.user)
         body.addWidget(self.text)
+        self.sources = QLabel('')
+        self.sources.setTextFormat(Qt.RichText)
+        self.sources.setOpenExternalLinks(True)
+        self.sources.setWordWrap(True)
+        self.sources.hide()
+        body.addWidget(self.sources)
+        self._sources = []
         self.meta = QLabel('')
         self.meta.setWordWrap(True)
         self.meta.hide()
@@ -253,6 +279,26 @@ class MessageRow(QWidget):
         width = min(self.text.natural_width(), text_limit)
         if self.text.width() != width:
             self.text.setFixedWidth(width)
+
+    def set_sources(self, sources):
+        self._sources = [(str(item.get('title') or item.get('url') or ''),
+                          str(item.get('url') or '')) for item in (sources or [])
+                         if isinstance(item, dict)
+                         and str(item.get('url') or '').lower().startswith(('http://', 'https://'))][:5]
+        self._render_sources()
+
+    def _render_sources(self):
+        if not self._sources:
+            self.sources.hide()
+            self.sources.clear()
+            return
+        t = tokens()
+        links = []
+        for title, url in self._sources:
+            links.append(f'<a href="{html.escape(url, quote=True)}" style="color:{t.brand_hover};'
+                         f'text-decoration:none;">{html.escape(title or url)}</a>')
+        self.sources.setText('来源：' + '　·　'.join(links))
+        self.sources.show()
 
     def set_meta(self, text):
         if self.meta is None:
@@ -318,6 +364,9 @@ class MessageRow(QWidget):
         if self.meta is not None:
             self.meta.setStyleSheet(f'background:transparent;color:{t.ink_4};'
                                     f'font-family:"{T.FONT_UI}";font-size:10px;')
+        self.sources.setStyleSheet(f'background:transparent;color:{t.ink_3};'
+                                   f'font-family:"{T.FONT_UI}";font-size:10px;')
+        self._render_sources()
         if self._error_box is not None:
             self._error_box.setStyleSheet(f'QFrame#chatError{{background:{t.alert_wash};'
                                           'border:1px solid transparent;border-radius:9px;}')
@@ -444,6 +493,13 @@ class MessageHistory(SmoothScrollArea):
         row.show_error(content, reason, on_retry, on_local)
         if self.messages:
             self.messages[-1] = (row.role, content)
+        if follow:
+            self._follow_timer.start(100)
+
+    def set_sources(self, row, sources):
+        bar = self.verticalScrollBar()
+        follow = bar.maximum() - bar.value() < 60
+        row.set_sources(sources)
         if follow:
             self._follow_timer.start(100)
 

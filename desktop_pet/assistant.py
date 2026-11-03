@@ -222,7 +222,7 @@ def test_connection(settings, timeout=8):
         raise ValueError('连接失败：服务返回格式不兼容') from None
 
 
-def ask(settings, messages, on_chunk=None, cancelled=None, tasks=None):
+def ask(settings, messages, on_chunk=None, cancelled=None, tasks=None, search_context=None):
     cancelled = cancelled or (lambda: False)
     if cancelled():
         raise RequestCancelled()
@@ -252,6 +252,7 @@ def ask(settings, messages, on_chunk=None, cancelled=None, tasks=None):
               '用户明确要求创建待办或提醒且事项与时间完整时，直接输出 tasks，由程序自动保存并设置提醒，不要要求用户确认或点击保存。'
               '仅讨论、举例或规划建议不要输出 tasks；用户要求直接安排具体待办时才创建。'
               '不要受历史回复中“待确认”“需要保存”等旧流程影响。保存结果由程序反馈，正文不要声称已经执行成功。'
+              + ('\n\n' + search_context if search_context else '')
               + '\n\n' + task_snapshot(tasks or []))
     history = []
     for m in messages[-20:]:
