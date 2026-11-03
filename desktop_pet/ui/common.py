@@ -1,6 +1,8 @@
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
-from PyQt5.QtCore import QDateTime
+from PyQt5 import sip
+from PyQt5.QtCore import QDateTime, QTimer
 from PyQt5.QtWidgets import (QDateTimeEdit, QDialog, QFrame, QLineEdit, QPushButton,
                              QComboBox, QLabel, QHBoxLayout, QTextBrowser, QVBoxLayout)
 
@@ -11,6 +13,38 @@ from .controls import CheckBox as QCheckBox
 from .controls import PrimaryButton
 from .controls import LineEdit as QLineEdit
 from .controls import DateTimeEdit as QDateTimeEdit
+
+_freeze_depth = {}
+
+
+def _thaw(widget):
+    try:
+        if sip.isdeleted(widget):
+            return
+        # 父控件冻结时子控件读到的 updatesEnabled() 也是 False，必须显式恢复，
+        # 否则子控件会一直留在“显式禁用更新”的状态。
+        widget.setUpdatesEnabled(True)
+        widget.update()
+    except RuntimeError:
+        pass
+
+
+@contextmanager
+def frozen_updates(widget):
+    """冻结绘制到下一轮事件循环再恢复，把布局/滚动条的二次重绘合并为一帧。"""
+    depth = _freeze_depth.get(widget, 0)
+    if depth == 0:
+        widget.setUpdatesEnabled(False)
+    _freeze_depth[widget] = depth + 1
+    try:
+        yield
+    finally:
+        depth = _freeze_depth.get(widget, 1) - 1
+        if depth:
+            _freeze_depth[widget] = depth
+        else:
+            _freeze_depth.pop(widget, None)
+            QTimer.singleShot(0, lambda w=widget: _thaw(w))
 
 
 def repeat_input(rule='none'):

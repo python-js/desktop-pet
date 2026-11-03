@@ -20,7 +20,7 @@ from .core import (REMIND_LIMIT, TaskStore, decode_response, in_quiet_hours,
                    local_day_bounds, parse_due, utc_now)
 from .platforms import data_directory, notify
 from . import dingtalk
-from .ui.common import PlanDialog, button, local_time
+from .ui.common import PlanDialog, button, frozen_updates, local_time
 from .ui.draft_card import DraftCard
 from .ui.home import HomePageMixin, Line
 from .ui.tasks import TasksPageMixin
@@ -330,9 +330,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
                 self.persist_settings()
             except OSError:
                 self.statusBar().showMessage('主题设置暂时无法保存，本次运行仍然有效。', 6000)
-        # 整套令牌重建会让所有子控件重新 polish；先冻结绘制，避免逐块刷新造成闪烁。
-        self.setUpdatesEnabled(False)
-        try:
+        # 整套令牌重建会让所有子控件重新 polish；冻结绘制到下一轮事件循环，合并为一帧。
+        with frozen_updates(self):
             apply_theme(QApplication.instance(), self.theme)
             self.theme_button.set_icon_name('sun' if self.theme == 'dark' else 'moon')
             self.win_mark.setPixmap(icons.pixmap('paw', tokens().brand, 14))
@@ -345,16 +344,13 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             if hasattr(self, 'settings_theme_segment'):
                 self.settings_theme_segment.set_current(self.theme)
             if hasattr(self, 'home_hero'):
-                self.refresh_home()
+                self.refresh_home_theme()
             if hasattr(self, 'task_segments'):
-                self.refresh_tasks()
+                self.refresh_tasks_theme()
             if hasattr(self, 'chat_bar'):
                 self.refresh_chat_theme()
             if hasattr(self, 'refresh_settings_theme'):
                 self.refresh_settings_theme()
-        finally:
-            self.setUpdatesEnabled(True)
-            self.update()
         if notify:
             self.statusBar().showMessage(
                 '已切换到夜幕主题' if self.theme == 'dark' else '已切换到纸白主题', 4000)

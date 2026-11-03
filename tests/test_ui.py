@@ -684,6 +684,52 @@ class UiSmokeTests(unittest.TestCase):
                     window.deleteLater()
                     app.processEvents()
 
+    def test_refresh_skips_rebuild_and_theme_restyles_in_place(self):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        from datetime import datetime, timedelta as span
+        from unittest.mock import patch
+        from PyQt5.QtWidgets import QApplication
+        from desktop_pet.app import MainWindow
+        from desktop_pet.ui.theme import tokens
+
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
+                window = MainWindow()
+                window.timer.stop()
+                window.task_refresh_timer.stop()
+                try:
+                    now = datetime.now().astimezone()
+                    tid = window.store.add('闪烁检查', (now + span(hours=1)).isoformat(), now)
+                    window.refresh_home()
+                    home_row = window.home_row_widgets[0]
+                    window.refresh_tasks()
+                    task_row = next(row for row in window.task_rows if row.task['id'] == tid)
+
+                    # 数据未变时重复刷新不应替换控件。
+                    window.refresh_home()
+                    window.refresh_tasks()
+                    self.assertIs(window.home_row_widgets[0], home_row)
+                    self.assertIs(next(row for row in window.task_rows
+                                       if row.task['id'] == tid), task_row)
+
+                    # 主题切换原地重样式，不重建行与日志卡。
+                    window.toggle_theme()
+                    app.processEvents()
+                    self.assertEqual(tokens().name, 'dark')
+                    self.assertIs(window.home_row_widgets[0], home_row)
+                    self.assertIs(next(row for row in window.task_rows
+                                       if row.task['id'] == tid), task_row)
+                    self.assertEqual(home_row.title_label._color.name(), tokens().ink.lower())
+                finally:
+                    window.shutting_down = True
+                    window.pet.close()
+                    window.tray.hide()
+                    window.close()
+                    window.store.close()
+                    window.deleteLater()
+                    app.processEvents()
+
     def test_3d_mode_falls_back_offscreen_and_persists(self):
         os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
         import json

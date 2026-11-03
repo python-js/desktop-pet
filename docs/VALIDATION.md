@@ -238,3 +238,11 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 - 闪烁修复：首页安排行与工作日志卡在移除时先 `hide()` 再 `deleteLater()`；`set_theme()` 用 `setUpdatesEnabled(False/True)` 合并整套 token 重建的绘制；设置页宠物图库同样先隐藏。
 - 截图证据：`.artifacts/chat-fix-{light,dark}-{1180,1440}.png`，生成脚本 `.artifacts/chat_fix_shots.py`（临时数据目录）。逐张检查：线程与输入卡同宽铺满；助手气泡全宽、用户气泡贴合文字；系统回执为中性灰底深色文字，单行不叠字；暗色下回执、气泡、输入卡与右栏对比正常。
 - 历史说明：P4 的 720 居中线程/输入列与 `CenteredHost` 已由本轮全宽方案取代，P4 记录仅作回退参考。
+
+## 0.31 P6 后续：闪烁修复（2026-11-03）
+
+- 128 项测试通过（`QT_QPA_PLATFORM=offscreen PYTHONPATH=tests;. .venv/Scripts/python.exe -m unittest discover -s tests -q`）。新增 `test_refresh_skips_rebuild_and_theme_restyles_in_place`：数据不变时连续 `refresh_home()` / `refresh_tasks()` 不替换行对象；`toggle_theme()` 后首页行与待办行仍是同一对象，首页行标题颜色切到 `tokens().ink`。
+- 重绘探针（真实窗口，`.artifacts/flicker_probe.py`，统计主窗口及其子控件的 `QEvent.Paint`）：切回首页 49 次绘制集中在 1 帧（15ms）；聊天→首页 1 帧；密度紧凑/宽松各 1 帧（31ms）；主题切亮 1 帧，切暗 1–2 批绘制但两批都是原地重样式完成后的同一最终画面。
+- 离屏截图（`.artifacts/flicker-{home,tasks}-{light,dark}.png`，脚本 `.artifacts/flicker_shots.py`，临时数据目录含逾期/今天/已完成/未来/对话来源任务）：主题切换后首页主卡、节奏卡、4 条安排、2 张日志卡及待办页分组、筛选、密度分段、行内胶囊均完整显示，无空白页或残留旧色。
+- 关键修复：① 冻结嵌套时子控件 `updatesEnabled()` 跟随父窗口为 `False`，解冻必须显式恢复，否则首页在首次切主题后永久不刷新；② 首页/待办用数据签名跳过无变化重建；③ 主题切换改为原地重样式；④ `apply_theme()` 不再每次重建 `Fusion` 样式与字体。
+- 历史说明：上一轮“旧控件先 `hide()` 再 `deleteLater()`”与 `set_theme()` 窗口冻结仍然有效，本轮在其上补充签名跳过与原地重样式；旧方案不删除。

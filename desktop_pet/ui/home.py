@@ -12,6 +12,7 @@ from ..core import parse_due
 from ..recurrence import REPEAT_LABELS
 from . import icons
 from . import tokens as T
+from .common import frozen_updates
 from .components import (ElidedLabel, Panel, RhythmRing, StatePill, StatusRow,
                          Track, due_when, overdue_text)
 from .pet_tag import countdown
@@ -275,6 +276,7 @@ class HeroCard(Panel):
     def render(self, task, kind, now=None, extra=0, early_nudge=True):
         t = tokens()
         now = now or datetime.now().astimezone()
+        self._render_args = (dict(task) if task else None, kind, extra, early_nudge)
         self.kind = kind
         self.task = dict(task) if task else None
         self.tip.setText('处理结果会记入今天的工作日志。')
@@ -342,6 +344,12 @@ class HeroCard(Panel):
             self.actions_widget.show()
         self.title.setText(task.get('title', ''))
         self.setToolTip(task.get('title', ''))
+
+    def refresh_theme(self):
+        args = getattr(self, '_render_args', None)
+        if args:
+            task, kind, extra, early = args
+            self.render(task, kind, extra=extra, early_nudge=early)
 
     @staticmethod
     def _caption(task, state):
@@ -411,6 +419,7 @@ class RhythmCard(Panel):
         layout.addStretch(1)
 
     def render(self, data, stats, now, early_nudge=True):
+        self._render_args = (data, stats, now, early_nudge)
         total = len(data['today_pending']) + len(data['today_done'])
         done = len(data['today_done'])
         self.ring.set_value(done, total)
@@ -445,20 +454,26 @@ class RhythmCard(Panel):
         self.next_dingtalk.set_state('钉钉', 'info', 'bell')
         self.next_dingtalk.setVisible(bool(task.get('dingtalk')))
 
+    def refresh_theme(self):
+        args = getattr(self, '_render_args', None)
+        if args:
+            data, stats, now, early = args
+            self.render(data, stats, now, early_nudge=early)
+
 
 class LogCard(Panel):
-    def __init__(self, title, description, icon_name, wash, ink, parent=None):
+    def __init__(self, title, description, icon_name, tone, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(76)
+        self._icon_name = icon_name
+        self._tone = tone
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(12)
-        mark = QLabel()
-        mark.setFixedSize(28, 28)
-        mark.setAlignment(Qt.AlignCenter)
-        mark.setStyleSheet(f'background:{wash};border-radius:9px;')
-        mark.setPixmap(icons.pixmap(icon_name, ink, 15))
-        layout.addWidget(mark, 0, Qt.AlignTop)
+        self.mark = QLabel()
+        self.mark.setFixedSize(28, 28)
+        self.mark.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.mark, 0, Qt.AlignTop)
         text = QVBoxLayout()
         text.setSpacing(2)
         title_label = _text(12, 'ink', QFont.DemiBold, wrap=True)
@@ -468,6 +483,14 @@ class LogCard(Panel):
         text.addWidget(title_label)
         text.addWidget(desc)
         layout.addLayout(text, 1)
+        self.refresh_theme()
+
+    def refresh_theme(self):
+        t = tokens()
+        wash = getattr(t, f'{self._tone}_wash')
+        ink = getattr(t, self._tone)
+        self.mark.setStyleSheet(f'background:{wash};border-radius:9px;')
+        self.mark.setPixmap(icons.pixmap(self._icon_name, ink, 15))
 
 
 class HomePageMixin:
@@ -595,6 +618,7 @@ class HomePageMixin:
         mark.setAlignment(Qt.AlignCenter)
         mark.setStyleSheet(f'background:{t.calm_wash};border-radius:11px;')
         mark.setPixmap(icons.pixmap('paw', t.calm, 17))
+        self.home_empty_mark = mark
         empty.addWidget(mark, 0, Qt.AlignHCenter)
         empty_title = _text(14, 'ink', QFont.DemiBold)
         empty_title.setText('今天没有要盯的事了')
@@ -635,6 +659,7 @@ class HomePageMixin:
         mark.setAlignment(Qt.AlignCenter)
         mark.setStyleSheet(f'background:{t.calm_wash};border-radius:9px;')
         mark.setPixmap(icons.pixmap('paw', t.calm, 15))
+        self.home_log_empty_mark = mark
         empty.addWidget(mark, 0, Qt.AlignTop)
         empty_text = _text(12, 'ink_3', wrap=True)
         empty_text.setText('今天还没有需要记录的动静。新增待办或和对话助手聊聊，小满会把动作记在这里。')
@@ -687,16 +712,66 @@ class HomePageMixin:
         for widget in (self.home_hero, self.home_rhythm):
             widget.update()
 
-    def refresh_home(self):
+    def refresh_home_theme(self):
+        """主题切换只原地重样式，避免销毁重建行与日志卡造成闪烁。"""
         if not hasattr(self, 'home_hero'):
             return
-        if hasattr(self, 'refresh_pet_tag'):
-            self.refresh_pet_tag()
-        self._apply_home_theme()
+        with frozen_updates(self.home_page):
+            self._apply_home_theme()
+            self.home_hero.refresh_theme()
+            self.home_rhythm.refresh_theme()
+            for row in self.home_row_widgets:
+                row.refresh_theme()
+            for card in self.home_log_cards:
+                card.refresh_theme()
+            t = tokens()
+            marks = ((getattr(self, 'home_empty_mark', None), 11, 17),
+                     (getattr(self, 'home_log_empty_mark', None), 9, 15))
+            for mark, radius, size in marks:
+                if mark is not None:
+                    mark.setStyleSheet(f'background:{t.calm_wash};border-radius:{radius}px;')
+                    mark.setPixmap(icons.pixmap('paw', t.calm, size))
+            self.home_empty_panel.update()
+            self.home_log_empty.update()
+            self.home_count.update()
+
+    def _home_snapshot(self):
         now = datetime.now().astimezone()
         data = today_overview(self.store, now)
         stats = self.store.today_stats(now)
         events = self.store.today_events(now)
+        signature = (
+            now.strftime('%H:%M'),
+            getattr(self, '_home_layout_state', None),
+            self.settings.get('density', 'comfortable'),
+            bool(self.settings.get('early_nudge', True)),
+            data['next']['id'] if data['next'] else None,
+            len(data['overdue']),
+            tuple((task['id'], task.get('title'), task.get('status'), task.get('due_at'),
+                   task.get('completed_at'), task.get('deferred'),
+                   task.get('remind_count'), task.get('early_notified_at'))
+                  for task in data['schedule']),
+            tuple(sorted(stats.items())),
+            tuple((event.get('id'), event['kind']) for event in events),
+        )
+        return now, data, stats, events, signature
+
+    def refresh_home(self):
+        if not hasattr(self, 'home_hero'):
+            return
+        now, data, stats, events, signature = self._home_snapshot()
+        if signature == getattr(self, '_home_signature', None):
+            return
+        scroll = self.home_scroll.verticalScrollBar().value()
+        with frozen_updates(self.home_page):
+            self._home_signature = signature
+            self._render_home(now, data, stats, events)
+            self.home_scroll.verticalScrollBar().setValue(scroll)
+
+    def _render_home(self, now, data, stats, events):
+        if hasattr(self, 'refresh_pet_tag'):
+            self.refresh_pet_tag()
+        self._apply_home_theme()
         self.home_date.setText(date_line(now))
         self.home_clock.setText(f'{now:%H:%M}')
         self.home_title.setText(greeting(now))
@@ -758,12 +833,11 @@ class HomePageMixin:
         self.home_log_grid.removeWidget(self.home_log_empty)
         self.home_log_empty.hide()
 
-        t = tokens()
         cards = []
         if created:
             cards.append(LogCard(f'听懂并记下 {created} 件事',
                                  '从对话里补上时间，才建的任务。',
-                                 'chat', t.brand_wash, t.brand))
+                                 'chat', 'brand'))
         if reminded or quiet:
             title = f'提醒 {reminded} 次'
             if quiet:
@@ -771,11 +845,11 @@ class HomePageMixin:
             detail = '桌面气泡与提前提点按待办标记执行。'
             if early:
                 detail += f' 其中 {early} 次是提前提点。'
-            cards.append(LogCard(title, detail, 'bell', t.caution_wash, t.caution))
+            cards.append(LogCard(title, detail, 'bell', 'caution'))
         if completed or postponed:
             cards.append(LogCard(f'结掉 {completed} 件、顺延 {postponed} 件',
                                  '完成时刻已记入今天的工作日志。',
-                                 'todo', t.calm_wash, t.calm))
+                                 'todo', 'calm'))
         if not cards:
             self.home_log_empty.show()
             self.home_log_grid.addWidget(

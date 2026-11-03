@@ -199,10 +199,16 @@ def _fluent_safe_stylesheet(qss, t):
     return shell
 
 
+_style_ready = False
+
+
 def apply_theme(app, theme='light'):
-    global _active
+    global _active, _style_ready
     _active = T.get(theme)
-    app.setStyle('Fusion')
+    # 反复 setStyle 会让所有顶层窗口整体重新 polish，只在首次应用主题时设置。
+    if not _style_ready:
+        app.setStyle('Fusion')
+        _style_ready = True
     # Offscreen Qt may not discover installed system fonts automatically.
     if not QFontDatabase().families() and os.name == 'nt':
         font_file = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'msyh.ttc'
@@ -210,7 +216,8 @@ def apply_theme(app, theme='light'):
             QFontDatabase.addApplicationFont(str(font_file))
     font = QFont(T.FONT_UI if os.name == 'nt' else 'Sans Serif')
     font.setPixelSize(14)
-    app.setFont(font)
+    if app.font().family() != font.family() or app.font().pixelSize() != font.pixelSize():
+        app.setFont(font)
     palette = app.palette()
     palette.setColor(QPalette.Window, QColor(_active.bg))
     palette.setColor(QPalette.Base, QColor(_active.surface))

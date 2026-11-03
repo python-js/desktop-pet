@@ -12,7 +12,7 @@ from ..core import parse_due
 from ..recurrence import REPEAT_LABELS, in_period
 from . import icons
 from . import tokens as T
-from .common import iso_input, TaskDialog
+from .common import iso_input, TaskDialog, frozen_updates
 from .components import (ElidedLabel, Segmented, StatePill, due_when, overdue_text)
 from .controls import ComboBox as QComboBox
 from .controls import LineEdit as QLineEdit
@@ -800,6 +800,26 @@ class TasksPageMixin:
         for row in self.task_rows:
             row.refresh_theme()
 
+    def refresh_tasks_theme(self):
+        """主题切换只原地重样式，避免整页重建造成闪烁。"""
+        if not hasattr(self, 'task_segments'):
+            return
+        with frozen_updates(self.task_page):
+            self._restyle_toolbar()
+            self.task_bulk.restyle()
+            t = tokens()
+            for group in self.task_groups:
+                box = group.layout()
+                header = box.itemAt(0).widget() if box and box.count() else None
+                if header is None:
+                    continue
+                for label in header.findChildren(QLabel):
+                    name = getattr(label, '_token_name', None)
+                    if name:
+                        _set_color(label, getattr(t, name))
+            self.task_empty_holder.update()
+            self.refresh_task_bulk()
+
     def _task_groups(self, rows, done, now):
         if done:
             return [('已完成 · 需要回顾', rows)] if rows else []
@@ -830,8 +850,13 @@ class TasksPageMixin:
     def refresh_tasks(self):
         if not hasattr(self, 'task_segments'):
             return
-        now = datetime.now().astimezone()
         scroll = self.task_scroll.verticalScrollBar().value()
+        with frozen_updates(self.task_page):
+            self._refresh_tasks()
+            self.task_scroll.verticalScrollBar().setValue(scroll)
+
+    def _refresh_tasks(self):
+        now = datetime.now().astimezone()
         done = self.task_segments.key() == 'done'
         search = self.task_search.text().strip().lower()
         pending = [dict(row) for row in self.store.pending()]
@@ -851,6 +876,17 @@ class TasksPageMixin:
         if hasattr(self, 'task_count_num'):
             self.task_count_num.setText(str(len(source)))
             self.task_count_cap.setText('项已完成' if done else '项未完成')
+
+        signature = (
+            done, search, self.task_period.currentData() or 'all',
+            self.settings.get('density', 'comfortable'),
+            tuple((row['id'], row.get('title'), row.get('status'), row.get('due_at'),
+                   row.get('completed_at'), row.get('deferred'), row.get('remind_count'),
+                   row.get('dingtalk'), row.get('early_notified_at')) for row in source),
+        )
+        if signature == getattr(self, '_task_signature', None):
+            return
+        self._task_signature = signature
 
         for holder in self.task_groups:
             self.task_body_layout.removeWidget(holder)
@@ -897,8 +933,9 @@ class TasksPageMixin:
         self.task_bulk.restyle()
         self.task_bulk.set_undo_enabled(bool(self.deleted_batch or self.last_deleted))
         self.refresh_task_bulk()
-        self.task_scroll.verticalScrollBar().setValue(scroll)
-        self.refresh_home()
+        # 首页不可见时不重建，切回首页会由 currentChanged 触发刷新。
+        if not self.isVisible() or self.tabs.currentIndex() == 0:
+            self.refresh_home()
         if hasattr(self, 'chat_rail'):
             self.refresh_chat_rail()
 

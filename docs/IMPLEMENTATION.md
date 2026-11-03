@@ -249,3 +249,14 @@ py -3 -m venv .venv
 - 系统回执：`EventPill` 改为 22px、`surface_2` 底 + `border` 描边、`ink_2` 正文与 `ink_3` 勾选，不再使用苔绿文字；`display_text()` 先把换行压平成单行再省略，避免 `QRect` 版 `drawText` 画成多行叠字。
 - 闪烁：`refresh_home()` 与宠物图库重建时旧控件先 `hide()` 再 `deleteLater()`，避免延迟销毁期间与新控件同屏；`set_theme()` 期间冻结窗口绘制，主题重建完成后一次性 `update()`。
 - 测试：新增系统回执换行、用户气泡收窄与助手全宽、首页旧行先隐藏 3 项断言；全量 127 项通过。
+
+## 0.31 P6 后续：切页/主题/密度闪烁修复（2026-11-03）
+
+- 根因：`refresh_home()` 与 `refresh_tasks()` 在每次切回首页、切密度、切主题时都销毁并重建整页行卡；主题切换走的是“重建”而非“重样式”；上一轮的窗口冻结只包住 `set_theme()`，且嵌套冻结时子页读到的 `updatesEnabled()` 已随父窗口为 `False`，解冻后子页被留在显式禁用更新的状态。
+- `ui/common.py` 新增 `frozen_updates()`：按控件记录嵌套深度，解冻推迟到下一轮事件循环，把布局、滚动条范围变化与删除延迟事件合并到一次绘制；解冻时显式 `setUpdatesEnabled(True)`，避免父窗口冻结导致的子控件永久禁用。
+- `ui/home.py`：`refresh_home()` 拆为 `_home_snapshot()` + `_render_home()`，以“分钟、布局断点、密度、提前提点、下一次待办、今日安排字段、今日统计、今日事件”组成签名，数据未变直接返回且不改动控件；重建期间保存/恢复 `home_scroll` 位置。新增 `refresh_home_theme()`，主题切换只调用 `_apply_home_theme()`、`HeroCard/RhythmCard/StatusRow/LogCard.refresh_theme()` 与空态图标的原地重设。
+- `LogCard` 改为按 `brand/caution/calm` 语气取 token 并新增 `refresh_theme()`；`HeroCard`、`RhythmCard` 保存最近一次 `render()` 参数，主题变更时原地重渲染。
+- `ui/tasks.py`：`refresh_tasks()` 同样在冻结中重建并恢复滚动；`_refresh_tasks()` 以“筛选/搜索/周期/密度/行字段”签名跳过无变化重建；新增 `refresh_tasks_theme()` 只重设工具栏、分组标题、空态、批量条与行样式。首页不可见时 `refresh_tasks()` 不再重建隐藏的首页，切回首页由 `currentChanged` 触发。
+- `ui/theme.py`：`apply_theme()` 只在首次应用时 `setStyle('Fusion')`，字体族/字号变化时才 `setFont()`，避免每次换主题让所有顶层窗口重新 polish。
+- `app.py`：`set_theme()` 改用 `frozen_updates(self)`，并调用 `refresh_home_theme()` / `refresh_tasks_theme()`，不再整页重建。
+- 验证：全量 128 项测试通过；新增 `test_refresh_skips_rebuild_and_theme_restyles_in_place` 断言重复刷新与主题切换后首页行和待办行对象不变、首页行标题颜色跟随暗色 token。
