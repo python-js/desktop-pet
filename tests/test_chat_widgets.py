@@ -95,3 +95,26 @@ class MessageWidgetTests(unittest.TestCase):
             history.close()
             history.deleteLater()
             QT_APP.processEvents()
+
+    def test_stream_append_matches_full_render(self):
+        history = MessageHistory()
+        history.resize(700, 400)
+        history.show()
+        try:
+            row = history.append_message('assistant', '正在思考…')
+            full = history.append_message('assistant', '')
+            QTest.qWait(30)
+            text = '第 1 段\n\n第 2 段\n\n第 3 段\n\n第 4 段'
+            history.update_row(row, text[:6])
+            history.update_row(full, text)
+            QTest.qWait(20)
+            partial = row.text.height()
+            history.update_row(row, text)
+            QTest.qWait(40)
+            self.assertEqual(row.text.toPlainText(), text)
+            self.assertGreater(row.text.height(), partial)
+            self.assertEqual(row.text.height(), full.text.height())
+        finally:
+            history.close()
+            history.deleteLater()
+            QT_APP.processEvents()

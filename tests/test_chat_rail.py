@@ -105,6 +105,28 @@ class ChatRailTests(unittest.TestCase):
         self.assertNotIn('\n', text)
         self.assertIn('已保存', text)
 
+    def test_session_refresh_updates_in_place(self):
+        window = self.window
+        rail = window.chat_rail
+        label = rail._session_labels['消息']
+        calls = []
+        original = rail._rebuild
+        rail._rebuild = lambda *args, **kwargs: calls.append(1)
+        try:
+            window.store.add_message('user', '你好', window.active_session)
+            window.refresh_chat_rail()
+            self.assertEqual(calls, [])
+            self.assertIs(rail._session_labels['消息'], label)
+            self.assertEqual(label.text(), '1 条')
+
+            now = datetime.now().astimezone()
+            window.store.add('会话里的新待办', (now + timedelta(hours=1)).isoformat(),
+                             now, source='chat')
+            window.refresh_chat_rail()
+            self.assertEqual(calls, [1])
+        finally:
+            rail._rebuild = original
+
     def test_user_bubble_hugs_content_while_assistant_fills_thread(self):
         from PyQt5.QtTest import QTest
         from desktop_pet.ui.chat_widgets import MessageHistory

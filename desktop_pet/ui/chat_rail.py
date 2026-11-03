@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QScrollAr
 
 from ..core import parse_due
 from ..recurrence import REPEAT_LABELS
+from .common import frozen_updates
 from . import icons
 from . import tokens as T
 from .components import ElidedLabel, Panel, StatePill
@@ -106,6 +107,8 @@ class ChatRail(QScrollArea):
         self.session_title = '默认对话'
         self.message_count = 0
         self.model_text = '本地规则'
+        self._content_key = None
+        self._session_labels = {}
         self.setFixedWidth(RAIL_W)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
@@ -126,6 +129,7 @@ class ChatRail(QScrollArea):
         self.refresh()
 
     def refresh_theme(self):
+        self._content_key = None
         self.refresh()
 
     def _clear(self):
@@ -143,7 +147,7 @@ class ChatRail(QScrollArea):
         label.setText(text)
         return label
 
-    def _kv(self, key, value, mono=False, elide=False):
+    def _kv(self, key, value, mono=False, elide=False, field=None):
         holder = QWidget()
         row = QHBoxLayout(holder)
         row.setContentsMargins(0, 0, 0, 0)
@@ -162,6 +166,8 @@ class ChatRail(QScrollArea):
             text = _label(12, 'ink_2', mono=mono, wrap=True)
             text.setText(value)
         row.addWidget(text, 1)
+        if field is not None:
+            self._session_labels[field] = text
         return holder
 
     def _action(self, text, icon_name, callback):
@@ -187,12 +193,54 @@ class ChatRail(QScrollArea):
         row.addStretch(1)
         return holder
 
+    def _today_items(self, pending, now):
+        today_items = []
+        today = now.date()
+        for row in self.store.history('done'):
+            if _local(row['due_at']).date() == today:
+                today_items.append((dict(row), True))
+        for row in pending:
+            if _local(row['due_at']).date() == today:
+                today_items.append((dict(row), False))
+        today_items.sort(key=lambda pair: _local(pair[0]['due_at']))
+        return today_items
+
+    def _update_session_labels(self):
+        values = {'对话': self.session_title,
+                  '消息': f'{self.message_count} 条',
+                  '模型': self.model_text}
+        for field, label in self._session_labels.items():
+            if label.text() != values[field]:
+                label.setText(values[field])
+
     def refresh(self):
-        self._clear()
         now = datetime.now().astimezone()
         pending = [dict(row) for row in self.store.pending()]
         chat_tasks = [row for row in pending if row.get('source') in ('chat', 'draft')]
         chat_tasks.sort(key=lambda row: str(row.get('created_at') or ''), reverse=True)
+        today_items = self._today_items(pending, now)
+        key = (self.session_title, self.message_count, self.model_text,
+               tuple((row['id'], row.get('title'), row.get('due_at'), row.get('repeat_rule'),
+                      row.get('dingtalk'), row.get('muted_until')) for row in chat_tasks),
+               tuple((row['id'], row.get('title'), row.get('due_at'), done)
+                     for row, done in today_items))
+        if key == self._content_key and self._session_labels:
+            return
+        # 只有会话信息变化时原地改字，避免发送消息后整栏销毁重建闪烁。
+        if (self._session_labels and self._content_key is not None
+                and key[3:] == self._content_key[3:]):
+            self._content_key = key
+            self._update_session_labels()
+            return
+        scroll = self.verticalScrollBar().value()
+        with frozen_updates(self):
+            self._content_key = key
+            self._rebuild(now, chat_tasks, today_items)
+            self.verticalScrollBar().setValue(scroll)
+
+    def _rebuild(self, now, chat_tasks, today_items):
+        self._clear()
+        self._session_labels = {}
         self.latest_task = chat_tasks[0] if chat_tasks else None
 
         self.box.addWidget(self._eyebrow('这段对话落到了什么'))
@@ -242,20 +290,10 @@ class ChatRail(QScrollArea):
 
         self.box.addWidget(Line())
         self.box.addWidget(self._eyebrow('会话信息'))
-        self.box.addWidget(self._kv('对话', self.session_title, elide=True))
-        self.box.addWidget(self._kv('消息', f'{self.message_count} 条'))
-        self.box.addWidget(self._kv('模型', self.model_text, mono=True, elide=True))
+        self.box.addWidget(self._kv('对话', self.session_title, elide=True, field='对话'))
+        self.box.addWidget(self._kv('消息', f'{self.message_count} 条', field='消息'))
+        self.box.addWidget(self._kv('模型', self.model_text, mono=True, elide=True, field='模型'))
 
-        today_items = []
-        today = now.date()
-        yesterday = [row for row in self.store.history('done')
-                     if _local(row['due_at']).date() == today]
-        for row in pending:
-            if _local(row['due_at']).date() == today:
-                today_items.append((dict(row), False))
-        for row in yesterday:
-            today_items.append((dict(row), True))
-        today_items.sort(key=lambda pair: _local(pair[0]['due_at']))
         self.box.addWidget(Line())
         self.box.addWidget(self._set_eyebrow(
             self._eyebrow(''), f'今天安排 · {len(today_items)} 项'))

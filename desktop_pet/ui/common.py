@@ -24,6 +24,10 @@ def _thaw(widget):
         # 父控件冻结时子控件读到的 updatesEnabled() 也是 False，必须显式恢复，
         # 否则子控件会一直留在“显式禁用更新”的状态。
         widget.setUpdatesEnabled(True)
+        parent = widget.parentWidget()
+        if parent is not None and not parent.updatesEnabled():
+            # 祖先仍在冻结中：由祖先的 thaw 一并重绘，避免同一改动分两帧闪现。
+            return
         widget.update()
     except RuntimeError:
         pass

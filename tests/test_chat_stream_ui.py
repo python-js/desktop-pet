@@ -52,6 +52,28 @@ class StreamingUiTests(unittest.TestCase):
                 break
         self.assertIsNone(self.window.worker)
 
+    def test_render_stream_skips_unchanged_content(self):
+        from unittest.mock import Mock
+        window = self.window
+        window.request_session = window.active_session
+        window.worker = type('Worker', (), {'cancel_event': threading.Event(),
+                                            'messages': []})()
+        try:
+            window.stream_row = window.history.append_message('assistant', '正在思考…')
+            window.stream_content = 'abc'
+            window.render_stream()
+            window.history.update_row = Mock(wraps=window.history.update_row)
+            window.render_stream()
+            self.assertEqual(window.history.update_row.call_count, 0)
+            window.stream_content = 'abcd'
+            window.render_stream()
+            self.assertEqual(window.history.update_row.call_count, 1)
+        finally:
+            window.worker = None
+            window.request_session = None
+            window.stream_row = None
+            window.stream_content = ''
+
     def test_stop_discards_partial_reply_and_task_proposals(self):
         from PyQt5.QtTest import QTest
         with patch('desktop_pet.app.ask', side_effect=self.delayed):

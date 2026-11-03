@@ -850,12 +850,20 @@ class TasksPageMixin:
     def refresh_tasks(self):
         if not hasattr(self, 'task_segments'):
             return
+        state = self._task_state()
+        if state is None:
+            return
+        now, done, search, source, signature = state
+        if signature == getattr(self, '_task_signature', None):
+            return
         scroll = self.task_scroll.verticalScrollBar().value()
-        with frozen_updates(self.task_page):
-            self._refresh_tasks()
+        # 待办变化会同时改动待办页、首页和右栏；冻结整窗合并为一帧，避免逐块闪现。
+        with frozen_updates(self):
+            self._task_signature = signature
+            self._render_tasks(now, done, search, source)
             self.task_scroll.verticalScrollBar().setValue(scroll)
 
-    def _refresh_tasks(self):
+    def _task_state(self):
         now = datetime.now().astimezone()
         done = self.task_segments.key() == 'done'
         search = self.task_search.text().strip().lower()
@@ -884,10 +892,9 @@ class TasksPageMixin:
                    row.get('completed_at'), row.get('deferred'), row.get('remind_count'),
                    row.get('dingtalk'), row.get('early_notified_at')) for row in source),
         )
-        if signature == getattr(self, '_task_signature', None):
-            return
-        self._task_signature = signature
+        return now, done, search, source, signature
 
+    def _render_tasks(self, now, done, search, source):
         for holder in self.task_groups:
             self.task_body_layout.removeWidget(holder)
             holder.hide()

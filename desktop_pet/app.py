@@ -98,6 +98,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.task_choice = {}
         self.request_session = None
         self.stream_content = ''
+        self._stream_rendered = ''
         self.stream_row = None
         self.error_row = None
         self.request_model = ''
@@ -131,7 +132,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.build_settings()
         self.tabs.currentChanged.connect(lambda index: self.refresh_home() if index == 0 else None)
         self.stream_timer = QTimer(self)
-        self.stream_timer.setInterval(60)
+        # 10 帧/秒足够顺滑；每帧都会让历史区整体重排，再快只是在放大闪动。
+        self.stream_timer.setInterval(100)
         self.stream_timer.timeout.connect(self.render_stream)
         self.load_conversation()
         self.statusBar().showMessage('关闭主窗口后可在托盘继续提醒；完全退出后不提醒。')
@@ -786,6 +788,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.request_session = self.active_session
         self.task_choice.pop(self.request_session, None)
         self.stream_content = ''
+        self._stream_rendered = ''
         self.stream_row = None
         self.error_row = None
         configured = bool(self.settings.get('model') and self.settings.get('base_url'))
@@ -815,7 +818,11 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         if (self.stream_row is None or self.worker is None
                 or self.request_session != self.active_session or self.worker.cancel_event.is_set()):
             return
-        self.history.update_row(self.stream_row, reply_preview(self.stream_content) or '正在思考…')
+        text = reply_preview(self.stream_content) or '正在思考…'
+        if text == self._stream_rendered:
+            return
+        self._stream_rendered = text
+        self.history.update_row(self.stream_row, text)
 
     def stop_request(self):
         if self.worker is None:

@@ -253,3 +253,12 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 - 缩放探针（真实窗口，`.artifacts/resize_probe.py`，900↔1500 往返 50 步）：扫动期间 `StatusRow`/`LogCard` 构造次数为 0，首页行对象与 `_pet_tiles` 图库对象保持 True；侧栏收起/展开绘制 138/172 次，重建 0。
 - 离屏截图：`.artifacts/resize-sidebar-expanded.png`（232px）、`.artifacts/resize-sidebar-collapsed.png`（68px，铭牌折为竖排、版本号隐藏、主题按钮保留）、`.artifacts/resize-narrow-expanded.png`（920px 仍按用户选择展开）。三张均无空白页、导航选中态与待办计数正常。
 - 历史说明：P0 的“≥1280 自动展开、<1280 自动收起”已由 winbar 手动开关取代，仅作历史；页面内容断点（1080/1280/1400）与页面内响应式布局保持不变。
+
+## 0.31 P6 后续：发送/流式/完成待办闪烁（2026-11-03）
+
+- 132 项测试通过（`PYTHONPATH="tests;." QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`，约 91s）。新增覆盖：`test_session_refresh_updates_in_place`（`add_message` 后右栏 `_rebuild` 调用 0 次、同一“消息”标签改为“1 条”，新增对话任务后重建 1 次）；`test_stream_append_matches_full_render`（同一历史区内增量行与整篇行最终文本相同、高度相等）；`test_render_stream_skips_unchanged_content`（相同正文第二次 `render_stream()` 不再刷新行）。
+- 发送消息探针（真实窗口）：2 个绘制批次 / 72 次绘制，`ChatRail._rebuild` 调用 0 次，此前为整栏销毁重建。
+- 流式探针（`.artifacts/stream_mode_probe.py`，真实窗口 1180×820，统计主窗口及子控件 `QEvent.Paint`）：old 口径总计 1025 次、非滚动条 880 次、整窗层 183 次（每帧约 34 次）；new 口径 1017 / 867 / 186（每帧约 33 次）。历史区每帧重绘面积约为视口的 12.7 倍，两口径接近——主导开销来自消息增长导致的内容整体重排；本轮消除的是文档整体重置、透明背景逐层上报与右栏重建，重排本身无法避免。
+- 完成待办探针（`.artifacts/stream_probe.py`）：待办页 3 个批次（+16/+32/+63ms，46/47/14 次，每批整窗层仅 3 次小区域重绘）；首页 2 个批次（+31/+47ms，81/15 次）。此前同一变化会分多帧逐块闪现。
+- 截图证据：`.artifacts/flicker-chat-light.png`、`.artifacts/flicker-chat-dark.png`（脚本 `.artifacts/flicker_shots.py`，临时数据目录）：流式结束后纸白/夜幕下气泡、正文、输入卡与右栏完整，无白带、无空白页。离屏环境不产生 `QEvent.Paint`，闪烁判断以真实窗口探针的批次与重绘次数为准。
+- 历史说明：本轮试过在 `render_stream()` 中用 `frozen_updates(history.content)` 冻结历史区，真实窗口反而升到 1140 次/44 批次（冻结使整块 content 每帧重绘），已放弃；`append_plain()` 内同步 `_apply_height()` 同样让绘制回升（1278/67），一并撤销。两项仅作历史备查。

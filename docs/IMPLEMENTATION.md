@@ -269,3 +269,15 @@ py -3 -m venv .venv
 - `app.py`：侧栏改为用户主动收缩——winbar 左侧新增 `sidebar_toggle`（`side` 图标），`sidebar_collapsed` 写入 `settings.json` 并在启动恢复；`apply_layout()` 只读用户态，不再按 1280 自动切换。切换时用 `frozen_updates(self)` 合并宽度、品牌区、导航与铭牌变化。
 - `ui/settings.py`：`load_configuration()` 与 `persist_settings()` 的布尔白名单加入 `sidebar_collapsed`。
 - 验证：全量 129 项测试通过；新增 `test_sidebar_toggle_and_resize_keep_widgets` 覆盖主动收缩/恢复、跨断点缩放后控件对象不变与窄窗保持用户展开态。
+
+## 0.31 P6 后续：发送/流式/完成待办闪烁修复（2026-11-03）
+
+- 发送消息闪烁根因：`refresh_chat_rail()` 每次都 `_clear()` 后整栏重建，仅“消息数 +1”也要销毁右栏全部标签与任务卡；同时 `refresh_tasks()` 每次无条件重建待办页并连带首页与右栏。
+- 流式闪烁根因：`render_stream()` 每 60ms 用整篇 `setPlainText` 重置正文，`MessageText` 与历史区均为透明背景，重排时逐层向祖先要底色；`ChatRail` 重建又叠加一层整窗重绘。
+- 完成待办闪烁根因：`refresh_tasks()` 重建任务行时，待办页、首页、右栏与状态栏分批 `update()`，同一数据变化分成 2–3 帧闪现。
+- `ui/chat_rail.py`：`refresh()` 改为内容签名（`_content_key`），数据未变直接返回；仅会话信息（对话标题/消息数/模型）变化时走 `_update_session_labels()` 原地改字，不重建控件；主题切换清空签名强制重建；`_rebuild()` 在 `frozen_updates(self)` 内完成并恢复滚动位置。
+- `ui/tasks.py`：`refresh_tasks()` 拆为 `_task_state()`（算签名与筛选结果）+ `_render_tasks()`（重建），签名未变直接返回；签名变化时用 `frozen_updates(self)` 冻结整窗，把待办页/首页/右栏/状态栏的改动合并为一帧。
+- `app.py`：`render_stream()` 以 `_stream_rendered` 去重，相同正文不再 `update_row()`；`stream_timer` 由 60ms 调为 100ms（10 帧/秒足够顺滑，更快只会放大重排闪动）；`start_request()` 重置 `_stream_rendered`。
+- `ui/chat_widgets.py`：`MessageText.append_plain()` 用 `QTextCursor.insertText` 只追加新增段落；`MessageRow.set_content()` 在纯文本、非用户、内容为旧内容前缀时走增量追加，不再整篇重置；`MessageText.refresh_theme()` 与 `MessageHistory.refresh_theme()` 改为与气泡/聊天列同色的不透明背景，重绘止步于正文与视口，暗色下无白带。
+- `ui/common.py`：`_thaw()` 在父控件仍冻结时跳过自身 `update()`，由祖先解冻时一并重绘，减少同一改动分两帧闪现。
+- 验证：全量 132 项测试通过；新增 `test_session_refresh_updates_in_place`（发送消息只改字不重建右栏）、`test_stream_append_matches_full_render`（增量追加与整篇渲染的文本与高度一致）、`test_render_stream_skips_unchanged_content`（相同正文不重复刷新）。

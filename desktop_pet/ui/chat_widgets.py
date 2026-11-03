@@ -128,7 +128,9 @@ class MessageText(QTextBrowser):
     def refresh_theme(self, user=False):
         t = tokens()
         color = t.brand_press if user else t.ink
-        self.setStyleSheet(f'QTextBrowser{{background:transparent;border:0;padding:0;color:{color};'
+        # 与气泡同色不透明底：流式重排只重绘正文，不再向气泡和祖先逐层要底色。
+        fill = t.brand_wash if user else t.surface
+        self.setStyleSheet(f'QTextBrowser{{background:{fill};border:0;padding:0;color:{color};'
                            f'font-family:"{T.FONT_UI}";font-size:13px;}}')
 
     def setPlainText(self, text):
@@ -138,6 +140,15 @@ class MessageText(QTextBrowser):
         block = QTextBlockFormat()
         block.setLineHeight(165, QTextBlockFormat.ProportionalHeight)
         cursor.mergeBlockFormat(block)
+        self.fit_height()
+
+    def append_plain(self, text):
+        """增量追加流式正文：只排新增段落，避免整篇重置造成的闪动。"""
+        if not text:
+            return
+        cursor = QTextCursor(self.document())
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(text)
         self.fit_height()
 
     def setMarkdown(self, text):
@@ -215,7 +226,13 @@ class MessageRow(QWidget):
         self.set_content(self._content, self.role == 'assistant')
 
     def set_content(self, content, markdown=False):
-        self._content = content or ''
+        content = content or ''
+        if (not markdown and not self.user and not self._markdown and self._content
+                and content.startswith(self._content)):
+            self.text.append_plain(content[len(self._content):])
+            self._content = content
+            return
+        self._content = content
         self._markdown = bool(markdown)
         if self.system:
             self.pill.text = self._content
@@ -434,6 +451,10 @@ class MessageHistory(SmoothScrollArea):
         if not hasattr(self, 'placeholder_mark'):
             return
         t = tokens()
+        # 与聊天列同色不透明：正文重排的重绘止步于视口，不再逐层上报整窗。
+        self.setStyleSheet(f'QScrollArea{{background:{t.bg};border:0;}}')
+        self.viewport().setStyleSheet(f'background:{t.bg};')
+        self.content.setStyleSheet(f'background:{t.bg};')
         self.placeholder_mark.setStyleSheet(f'background:{t.calm_wash};border-radius:20px;')
         self.placeholder_mark.setPixmap(icons.pixmap('paw', t.calm, 19))
         self.placeholder_title.setStyleSheet(f'background:transparent;color:{t.ink};'
