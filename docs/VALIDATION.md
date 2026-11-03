@@ -246,3 +246,10 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 - 离屏截图（`.artifacts/flicker-{home,tasks}-{light,dark}.png`，脚本 `.artifacts/flicker_shots.py`，临时数据目录含逾期/今天/已完成/未来/对话来源任务）：主题切换后首页主卡、节奏卡、4 条安排、2 张日志卡及待办页分组、筛选、密度分段、行内胶囊均完整显示，无空白页或残留旧色。
 - 关键修复：① 冻结嵌套时子控件 `updatesEnabled()` 跟随父窗口为 `False`，解冻必须显式恢复，否则首页在首次切主题后永久不刷新；② 首页/待办用数据签名跳过无变化重建；③ 主题切换改为原地重样式；④ `apply_theme()` 不再每次重建 `Fusion` 样式与字体。
 - 历史说明：上一轮“旧控件先 `hide()` 再 `deleteLater()`”与 `set_theme()` 窗口冻结仍然有效，本轮在其上补充签名跳过与原地重样式；旧方案不删除。
+
+## 0.31 P6 后续：缩放与侧栏（2026-11-03）
+
+- 129 项测试通过（`QT_QPA_PLATFORM=offscreen PYTHONPATH=tests;. .venv/Scripts/python.exe -m unittest discover -s tests -q`）。新增 `test_sidebar_toggle_and_resize_keep_widgets`：默认展开 232px，`toggle_sidebar()` 后 68px、品牌区折叠且写入 `settings.json`，再切回 232px；连续 resize 900→1500→1180 跨三个断点后首页行与宠物图库仍是同一批对象；920px 窄窗下侧栏保持用户手动展开状态。
+- 缩放探针（真实窗口，`.artifacts/resize_probe.py`，900↔1500 往返 50 步）：扫动期间 `StatusRow`/`LogCard` 构造次数为 0，首页行对象与 `_pet_tiles` 图库对象保持 True；侧栏收起/展开绘制 138/172 次，重建 0。
+- 离屏截图：`.artifacts/resize-sidebar-expanded.png`（232px）、`.artifacts/resize-sidebar-collapsed.png`（68px，铭牌折为竖排、版本号隐藏、主题按钮保留）、`.artifacts/resize-narrow-expanded.png`（920px 仍按用户选择展开）。三张均无空白页、导航选中态与待办计数正常。
+- 历史说明：P0 的“≥1280 自动展开、<1280 自动收起”已由 winbar 手动开关取代，仅作历史；页面内容断点（1080/1280/1400）与页面内响应式布局保持不变。

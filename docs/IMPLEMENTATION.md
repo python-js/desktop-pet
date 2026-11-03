@@ -260,3 +260,12 @@ py -3 -m venv .venv
 - `ui/theme.py`：`apply_theme()` 只在首次应用时 `setStyle('Fusion')`，字体族/字号变化时才 `setFont()`，避免每次换主题让所有顶层窗口重新 polish。
 - `app.py`：`set_theme()` 改用 `frozen_updates(self)`，并调用 `refresh_home_theme()` / `refresh_tasks_theme()`，不再整页重建。
 - 验证：全量 128 项测试通过；新增 `test_refresh_skips_rebuild_and_theme_restyles_in_place` 断言重复刷新与主题切换后首页行和待办行对象不变、首页行标题颜色跟随暗色 token。
+
+## 0.31 P6 后续：拖动缩放闪烁与侧栏主动收缩（2026-11-03）
+
+- 缩放闪烁根因：`apply_home_layout()` 跨 1080/1280/1400 断点时直接调用 `refresh_home()`，把首页安排行与日志卡全部 `deleteLater()` 重建；`apply_settings_layout()` 跨 1080 时重建宠物图库；侧栏在 1280 断点突跳 232↔68px，带动主列整体重新布局。
+- `ui/home.py`：删除 `apply_home_layout()` 中的整页刷新，新增 `_reflow_home_log()` 只把现有日志卡/空态在单列与三列间重新 `addWidget`；`_home_snapshot()` 签名移除布局断点，断点变化不再触发数据重建。
+- `ui/settings.py`：`refresh_pet_gallery()` 记录 `_pet_tiles`；新增 `_reflow_pet_gallery()` 仅重排缩略图，列数变化不再销毁重建。
+- `app.py`：侧栏改为用户主动收缩——winbar 左侧新增 `sidebar_toggle`（`side` 图标），`sidebar_collapsed` 写入 `settings.json` 并在启动恢复；`apply_layout()` 只读用户态，不再按 1280 自动切换。切换时用 `frozen_updates(self)` 合并宽度、品牌区、导航与铭牌变化。
+- `ui/settings.py`：`load_configuration()` 与 `persist_settings()` 的布尔白名单加入 `sidebar_collapsed`。
+- 验证：全量 129 项测试通过；新增 `test_sidebar_toggle_and_resize_keep_widgets` 覆盖主动收缩/恢复、跨断点缩放后控件对象不变与窄窗保持用户展开态。

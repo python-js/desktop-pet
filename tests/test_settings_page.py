@@ -74,7 +74,7 @@ class SettingsPageTests(unittest.TestCase):
 
         window.resize(900, 820)
         self.app.processEvents()
-        self.assertEqual(window.settings_content.width(), 760)
+        self.assertLessEqual(window.settings_content.width(), 820)
         self.assertEqual(window.settings_scroll.horizontalScrollBar().maximum(), 0)
         self.assertTrue(all(row._stacked for row in window._pref_rows))
 

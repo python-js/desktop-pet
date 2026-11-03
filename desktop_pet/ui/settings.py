@@ -379,7 +379,7 @@ class SettingsPageMixin:
                 self.settings = {k: loaded[k] for k in ('base_url', 'model', 'pet_image', 'pet_image_original',
                                                         'active_session', 'density', 'dnd_start', 'dnd_end')
                                  if isinstance(loaded.get(k), str)}
-                for key in ('stream', 'remember_key', 'pet_paused', 'pet_walking'):
+                for key in ('stream', 'remember_key', 'pet_paused', 'pet_walking', 'sidebar_collapsed'):
                     if isinstance(loaded.get(key), bool):
                         self.settings[key] = loaded[key]
                 if loaded.get('pet_mode') in ('2d', '3d'):
@@ -764,7 +764,22 @@ class SettingsPageMixin:
         if columns != self._pet_columns:
             self._pet_columns = columns
             if hasattr(self, 'pet_gallery_layout'):
-                self.refresh_pet_gallery()
+                self._reflow_pet_gallery()
+
+    def _reflow_pet_gallery(self):
+        """列数变化只重排现有缩略图，避免拖动缩放时重建导致闪烁。"""
+        tiles = getattr(self, '_pet_tiles', None)
+        if not tiles:
+            self.refresh_pet_gallery()
+            return
+        columns = self._pet_columns
+        for tile in tiles:
+            self.pet_gallery_layout.removeWidget(tile)
+        for column in range(8):
+            self.pet_gallery_layout.setColumnStretch(column, 0)
+        self.pet_gallery_layout.setColumnStretch(columns, 1)
+        for position, tile in enumerate(tiles):
+            self.pet_gallery_layout.addWidget(tile, position // columns, position % columns)
 
     def refresh_settings_theme(self):
         if not hasattr(self, 'settings_page'):
@@ -966,7 +981,7 @@ class SettingsPageMixin:
         allowed = ('base_url', 'model', 'pet_image', 'pet_image_original', 'pet_images', 'active_session', 'stream',
                    'remember_key', 'pet_position', 'pet_paused', 'pet_walking', 'pet_animations',
                    'pet_animation_backup', 'pet_mode', 'theme', 'density', 'early_nudge', 'sound_enabled',
-                   'auto_postpone', 'dnd_enabled', 'dnd_start', 'dnd_end')
+                   'auto_postpone', 'dnd_enabled', 'dnd_start', 'dnd_end', 'sidebar_collapsed')
         temp.write_text(json.dumps({k: settings[k] for k in allowed if k in settings}, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(path)
 
@@ -1125,6 +1140,7 @@ class SettingsPageMixin:
         default_tile.setToolTip('默认形象')
         default_tile.clicked.connect(self.select_default_image)
         self.pet_gallery_layout.addWidget(default_tile, 0, 0)
+        tiles = [default_tile]
         for index, record in enumerate(self.settings.get('pet_images', [])):
             path = record.get('image', '')
             tile = PetImageTile(QPixmap(path), path == active)
@@ -1132,6 +1148,8 @@ class SettingsPageMixin:
             tile.clicked.connect(lambda item=record: self.select_pet_image(item))
             position = index + 1
             self.pet_gallery_layout.addWidget(tile, position // columns, position % columns)
+            tiles.append(tile)
+        self._pet_tiles = tiles
         record = self.active_pet_record()
         self.remove_image_button.setEnabled(record is not None)
         self.cutout_button.setEnabled(record is not None)

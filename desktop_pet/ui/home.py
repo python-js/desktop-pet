@@ -697,7 +697,30 @@ class HomePageMixin:
                 self.home_top.setColumnStretch(0, 1)
                 self.home_top.setColumnStretch(1, 0)
         if not first:
-            self.refresh_home()
+            # 断点变化只重排现有日志卡；销毁重建行会让拖动缩放时整页闪烁。
+            self._reflow_home_log()
+
+    def _reflow_home_log(self):
+        if not hasattr(self, 'home_log_grid'):
+            return
+        grid = self.home_log_grid
+        stacked = self._home_log_stacked
+        for card in self.home_log_cards:
+            grid.removeWidget(card)
+        grid.removeWidget(self.home_log_empty)
+        if not self.home_log_cards:
+            grid.addWidget(self.home_log_empty, 0, 0, 1, 1 if stacked else 3)
+            return
+        for index, card in enumerate(self.home_log_cards):
+            if stacked:
+                grid.addWidget(card, index, 0)
+            else:
+                grid.addWidget(card, 0, index)
+        if stacked:
+            grid.setColumnStretch(0, 1)
+        else:
+            for index in range(3):
+                grid.setColumnStretch(index, 1 if index < len(self.home_log_cards) else 0)
 
     def _apply_home_theme(self):
         t = tokens()
@@ -740,9 +763,9 @@ class HomePageMixin:
         data = today_overview(self.store, now)
         stats = self.store.today_stats(now)
         events = self.store.today_events(now)
+        # 布局状态不入签名：断点变化由 _reflow_home_log 就地重排，不需要重建。
         signature = (
             now.strftime('%H:%M'),
-            getattr(self, '_home_layout_state', None),
             self.settings.get('density', 'comfortable'),
             bool(self.settings.get('early_nudge', True)),
             data['next']['id'] if data['next'] else None,

@@ -109,6 +109,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.shutting_down = False
         self.load_configuration(secret_store, startup_manager)
         self.theme = self.settings.get('theme', 'light')
+        self.sidebar_collapsed = bool(self.settings.get('sidebar_collapsed', False))
         if QApplication.instance() is not None:
             apply_theme(QApplication.instance(), self.theme)
         self.dingtalk_result.connect(self.show_dingtalk_result)
@@ -259,6 +260,9 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         win_box = QHBoxLayout(winbar)
         win_box.setContentsMargins(16, 0, 12, 0)
         win_box.setSpacing(8)
+        self.sidebar_toggle = IconButton('side', '展开侧边栏' if self.sidebar_collapsed else '收起侧边栏')
+        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
+        win_box.addWidget(self.sidebar_toggle)
         self.win_mark = QLabel()
         self.win_mark.setPixmap(icons.pixmap('paw', tokens().brand, 14))
         self.win_mark.setFixedSize(14, 14)
@@ -284,11 +288,23 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         for position, button in enumerate(self.nav_buttons):
             button.setChecked(position == index)
 
+    def toggle_sidebar(self):
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        self.settings['sidebar_collapsed'] = self.sidebar_collapsed
+        try:
+            self.persist_settings()
+        except OSError:
+            self.statusBar().showMessage('侧边栏状态暂时无法保存，本次运行仍然有效。', 6000)
+        # 宽度与文案一起切换，冻结到下一轮事件循环，避免中间态露出。
+        with frozen_updates(self):
+            self.apply_layout(self.width(), force=True)
+
     def apply_layout(self, width, force=False):
-        expanded = width >= 1280
+        expanded = not self.sidebar_collapsed
         if not force and getattr(self, '_layout_expanded', None) == expanded:
             return
         self._layout_expanded = expanded
+        self.sidebar_toggle.setToolTip('收起侧边栏' if expanded else '展开侧边栏')
         if expanded:
             self.sidebar.setFixedWidth(T.RAIL_W)
             self.side_layout.setContentsMargins(T.SIDEBAR_PAD, 16, T.SIDEBAR_PAD, 12)
@@ -339,6 +355,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             self.compact_logo.setPixmap(application_icon().pixmap(30, 30))
             for button in self.nav_buttons:
                 button.refresh_theme()
+            self.sidebar_toggle.refresh_theme()
             self.pet_tag.refresh_theme()
             self.live_badge.refresh_theme()
             if hasattr(self, 'settings_theme_segment'):

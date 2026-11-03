@@ -637,12 +637,20 @@ class UiSmokeTests(unittest.TestCase):
                     self.assertEqual(window.sidebar.width(), 232)
                     self.assertFalse(window.pet_tag.collapsed)
 
+                    # 窗口变窄不再自动收起，只有用户主动切换才收缩。
                     window.resize(900, 820)
+                    app.processEvents()
+                    self.assertEqual(window.sidebar.width(), 232)
+                    self.assertFalse(window.pet_tag.collapsed)
+                    window.toggle_sidebar()
                     app.processEvents()
                     self.assertEqual(window.sidebar.width(), 68)
                     self.assertTrue(window.pet_tag.collapsed)
                     self.assertTrue(window.pet_tag.content.isHidden())
                     self.assertTrue(window.nav_buttons[0].isChecked())
+                    window.toggle_sidebar()
+                    app.processEvents()
+                    self.assertEqual(window.sidebar.width(), 232)
 
                     window.store.add('导航计数', '2099-01-01T12:00:00+08:00')
                     window.refresh_pet_tag()
@@ -721,6 +729,61 @@ class UiSmokeTests(unittest.TestCase):
                     self.assertIs(next(row for row in window.task_rows
                                        if row.task['id'] == tid), task_row)
                     self.assertEqual(home_row.title_label._color.name(), tokens().ink.lower())
+                finally:
+                    window.shutting_down = True
+                    window.pet.close()
+                    window.tray.hide()
+                    window.close()
+                    window.store.close()
+                    window.deleteLater()
+                    app.processEvents()
+
+    def test_sidebar_toggle_and_resize_keep_widgets(self):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        from datetime import datetime, timedelta as span
+        from unittest.mock import patch
+        from PyQt5.QtWidgets import QApplication
+        from desktop_pet.app import MainWindow
+        from desktop_pet.ui import tokens as T
+
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
+                window = MainWindow()
+                window.timer.stop()
+                window.task_refresh_timer.stop()
+                try:
+                    # 侧栏默认展开；主动收起只改用户态，不依赖窗口宽度。
+                    self.assertFalse(window.sidebar_collapsed)
+                    self.assertEqual(window.sidebar.width(), T.RAIL_W)
+                    self.assertFalse(window.brand_full.isHidden())
+                    window.toggle_sidebar()
+                    app.processEvents()
+                    self.assertTrue(window.settings['sidebar_collapsed'])
+                    self.assertEqual(window.sidebar.width(), T.RAIL_W_COLLAPSED)
+                    self.assertTrue(window.brand_full.isHidden())
+                    self.assertFalse(window.brand_compact.isHidden())
+                    window.toggle_sidebar()
+                    app.processEvents()
+                    self.assertEqual(window.sidebar.width(), T.RAIL_W)
+
+                    now = datetime.now().astimezone()
+                    window.store.add('缩放检查', (now + span(hours=1)).isoformat(), now)
+                    window.refresh_home()
+                    home_row = window.home_row_widgets[0]
+                    tiles = list(window._pet_tiles)
+
+                    # 拖动缩放跨多个断点：行与画廊只重排，不销毁重建。
+                    for width in (900, 1200, 1500, 1180):
+                        window.resize(width, 760)
+                        app.processEvents()
+                    self.assertIs(window.home_row_widgets[0], home_row)
+                    self.assertEqual(list(window._pet_tiles), tiles)
+                    self.assertFalse(window.home_row_widgets[0].isHidden())
+                    # 窄窗口下侧栏仍保持用户手动展开的状态。
+                    window.resize(920, 700)
+                    app.processEvents()
+                    self.assertEqual(window.sidebar.width(), T.RAIL_W)
                 finally:
                     window.shutting_down = True
                     window.pet.close()
