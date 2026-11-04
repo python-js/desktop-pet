@@ -272,3 +272,13 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 - 截图证据：`.artifacts/websearch-shots/websearch-settings-{1440,900}-{light,dark}.png`、`websearch-chat-1180-{light,dark}.png`，生成脚本 `.artifacts/websearch_shots.py`（临时数据目录与示例端点，无真实 Key）。逐张检查：设置页“联网搜索”卡在 1440/900 与纸白/夜幕下布局正常；聊天页联网开关为激活态、来源条显示两条链接、助手正文内联链接在夜幕下为橙色（`#ee8454`），无蓝链残留。
 - 真实调用边界：本轮未使用真实 Tavily Key 发请求，联网结果质量、配额与 RPM 未实测；代码路径以 mock 的 HTTP 响应与错误码覆盖，真实调用需在“偏好设置 → 联网搜索”填写 Key 后点“测试连接”验证。
 - 历史说明：暗色 Markdown 链接最初固定为蓝色，`palette` 与 document default stylesheet 对 `setMarkdown` 无效；最终在 `MessageText.setMarkdown()` 后逐字符 `mergeCharFormat` 重着色，来源条同步改用 `brand_hover`。
+
+## 0.31 实时性修复与本地知识库（2026-11-04）
+
+- 163 项测试通过（`PYTHONPATH="tests;." QT_QPA_PLATFORM=offscreen .venv/Scripts/python.exe -m unittest discover -s tests -q`，约 105s）。
+- Tavily 时效：`tests/test_websearch.py` 11 项通过——行情类 `time_range=week`（“实时/现在/今天/多少钱”时为 `day`）、新闻类 `topic=news&days=3`、普通问题不带时效参数；`published_date` 保留并在 `format_context` 中显示“发布于”；任务措辞仍不触发检索。
+- 知识库核心：`tests/test_knowledge.py` 11 项通过——utf-8/gb18030 文本、docx（含表格）、xlsx、txt 提取；不支持格式与空文本报中文错误；600/80 切块重叠；Wiki 与原文同时可检索；2 字短查询走双字扫描；同路径同内容跳过、`force=True` 重建、文件变化替换旧索引；Wiki 生成失败保留原文并记录错误；移除/清空清理文件与 Wiki 目录；注入上下文含“资料名称”和“不得改变”约束。
+- 对话接入：`tests/test_knowledge_ui.py` 2 项通过——本地文档命中后 `ask` 收到含文档名与“600 元”的上下文，助手气泡下“资料：《差旅制度.txt》”可见；“一线城市住宿标准是多少”在关闭知识库后不注入上下文。
+- 设置页：`tests/test_settings_page.py` 8 项通过——新增 `test_knowledge_toggle_import_list_and_clear`：开关即时写入 `settings.json`、无资料时对话开关禁用、后台导入 1 份 txt 后清单出现且状态含“新增 1”、清空后清单为空并再次禁用；卡片标题断言加入“本地知识库”；1440/1180/900 三档仍无横向滚动（知识库卡窄窗按可用宽度收缩）。
+- 截图证据：`.artifacts/knowledge-shots/settings-knowledge-{1440,900}-{light,dark}.png`、`chat-knowledge-materials-{light,dark}.png`，生成脚本 `.artifacts/capture_knowledge.py`（临时数据目录，导入两份合成资料，示例端点，无真实密钥）。逐张检查：1440/900 资料卡在纸白/夜幕下标题、开关、清单与六个按钮完整，900 宽六按钮仍单行且横向滚动为 0；聊天页助手气泡下资料条与来源条同时存在时层级正常，暗色下资料条为 `ink_3`、正文对比正常。
+- 真实 Wiki 边界：使用本机已配置的模型与 DPAPI 密钥做真实导入冒烟（合成《差旅报销简则》，不涉及用户资料），该端点当前对本机 Python 3.11 OpenSSL 返回 `SSL: UNEXPECTED_EOF_WHILE_READING`（curl 直连可建立 TLS），`test_connection` 同样报“20 秒内无法连接服务”，因此本轮未能取得真实 Wiki 文本；失败路径已验证会保留原文索引并记录 `wiki_error`。需在可连通的网络或更换端点后复测 Wiki 生成质量与耗时。

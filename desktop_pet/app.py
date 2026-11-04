@@ -19,7 +19,7 @@ from .assistant import ask, local_reply, plain_text, reply_preview, RequestCance
 from .core import (REMIND_LIMIT, TaskStore, decode_response, in_quiet_hours,
                    local_day_bounds, parse_due, utc_now)
 from .platforms import data_directory, notify
-from . import dingtalk, websearch
+from . import dingtalk, knowledge, websearch
 from .ui.common import PlanDialog, button, frozen_updates, local_time
 from .ui.draft_card import DraftCard
 from .ui.home import HomePageMixin, Line
@@ -57,13 +57,19 @@ class AssistantWorker(QThread):
     search_started = pyqtSignal()
     searched = pyqtSignal(object)
     search_failed = pyqtSignal(str)
+    knowledge_started = pyqtSignal()
+    knowledge_searched = pyqtSignal(object)
 
-    def __init__(self, settings, messages, tasks, parent, web_query=''):
+    def __init__(self, settings, messages, tasks, parent, web_query='', knowledge=None,
+                 knowledge_query=''):
         super().__init__(parent)
         self.settings, self.messages = dict(settings), messages
         self.tasks = tasks
         self.web_query = web_query
+        self.knowledge = knowledge
+        self.knowledge_query = knowledge_query
         self.searching = False
+        self.reading = False
         self.cancel_event = threading.Event()
 
     def cancel(self):
@@ -71,6 +77,23 @@ class AssistantWorker(QThread):
 
     def run(self):
         try:
+            knowledge_context = ''
+            if self.knowledge_query and self.knowledge is not None:
+                self.reading = True
+                self.knowledge_started.emit()
+                try:
+                    hits = self.knowledge.search(self.knowledge_query)
+                    if self.cancel_event.is_set():
+                        raise RequestCancelled()
+                    if hits:
+                        knowledge_context = knowledge.format_context(hits)
+                        self.knowledge_searched.emit(hits)
+                except RequestCancelled:
+                    raise
+                except (ValueError, OSError):
+                    pass
+                finally:
+                    self.reading = False
             context = ''
             if self.web_query and self.settings.get('tavily_key'):
                 self.searching = True
@@ -88,6 +111,7 @@ class AssistantWorker(QThread):
                     self.search_failed.emit(str(exc))
                 finally:
                     self.searching = False
+            context = '\n\n'.join(part for part in (knowledge_context, context) if part)
             if context:
                 result = ask(self.settings, self.messages, self.chunk.emit,
                              self.cancel_event.is_set, self.tasks, search_context=context)
@@ -113,11 +137,14 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
     dingtalk_test = pyqtSignal(bool, str)
     settings_test = pyqtSignal(bool, str)
     websearch_test = pyqtSignal(bool, str)
+    knowledge_progress = pyqtSignal(str)
+    knowledge_imported = pyqtSignal(str, bool)
 
     def __init__(self, secret_store=None, startup_manager=None):
         super().__init__()
         self.root = data_directory()
         self.store = TaskStore(self.root / 'desktop-pet.sqlite3')
+        self.knowledge = knowledge.KnowledgeBase(self.root / 'knowledge')
         self.store.reset_notifications()
         self.worker = None
         self.retry_messages = None
@@ -131,6 +158,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.request_model = ''
         self.request_started = None
         self._search_sources = []
+        self._knowledge_sources = []
         self.exit_pending = False
         self.last_deleted = None
         self.reminders = {}
@@ -144,6 +172,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.dingtalk_result.connect(self.show_dingtalk_result)
         self.settings_test.connect(self.on_settings_test)
         self.websearch_test.connect(self.on_websearch_test)
+        self.knowledge_progress.connect(self.on_knowledge_progress)
+        self.knowledge_imported.connect(self.on_knowledge_imported)
         session_ids = {s['id'] for s in self.store.sessions()}
         self.active_session = self.settings.get('active_session', 'default')
         if self.active_session not in session_ids:
@@ -533,6 +563,10 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.web_toggle.setCheckable(True)
         self.web_toggle.toggled.connect(self.toggle_web_search)
         bar.addWidget(self.web_toggle)
+        self.kb_toggle = IconButton('book', '本地知识库：开', self.composer)
+        self.kb_toggle.setCheckable(True)
+        self.kb_toggle.toggled.connect(self.toggle_knowledge)
+        bar.addWidget(self.kb_toggle)
         self.chat_status = QLabel('')
         self.chat_status.setWordWrap(False)
         bar.addWidget(self.chat_status, 1)
@@ -574,6 +608,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
 
         self._chat_rail_open = False
         self.update_web_search_ui()
+        self.update_knowledge_ui()
         self.refresh_chat_theme()
         self.apply_chat_layout(self.width(), force=True)
         self.refresh_chat_rail()
@@ -636,6 +671,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.composer.refresh_theme()
         self.regenerate_button.refresh_theme()
         self.web_toggle.refresh_theme()
+        self.kb_toggle.refresh_theme()
         self.history.refresh_theme()
         for index in range(self.drafts.count()):
             card = self.drafts.itemAt(index).widget()
@@ -694,6 +730,48 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         if self.request_session == self.active_session:
             self.chat_status.setText(message)
         self.statusBar().showMessage(message + '，已按离线回答。', 8000)
+
+    def knowledge_ready(self):
+        try:
+            return self.knowledge.stats()['docs'] > 0
+        except (ValueError, OSError):
+            return False
+
+    def update_knowledge_ui(self):
+        if not hasattr(self, 'kb_toggle'):
+            return
+        ready = self.knowledge_ready()
+        enabled = ready and bool(self.settings.get('knowledge_enabled', True))
+        self.kb_toggle.blockSignals(True)
+        self.kb_toggle.setEnabled(ready)
+        self.kb_toggle.setChecked(enabled)
+        self.kb_toggle.blockSignals(False)
+        if not ready:
+            tip = '本地知识库：暂无资料，请在设置中添加文件'
+        elif enabled:
+            tip = '本地知识库：开（点击关闭）'
+        else:
+            tip = '本地知识库：关（点击开启）'
+        self.kb_toggle.setToolTip(tip)
+
+    def toggle_knowledge(self, checked):
+        if not self.knowledge_ready():
+            self.update_knowledge_ui()
+            return
+        self.settings['knowledge_enabled'] = bool(checked)
+        self.persist_settings()
+        self.update_knowledge_ui()
+        self.statusBar().showMessage('知识库已开启，回答前会先查本地资料。' if checked
+                                     else '知识库已关闭，不再检索本地资料。', 5000)
+
+    def on_knowledge_started(self):
+        if self.request_session == self.active_session:
+            self.chat_status.setText('正在查本地资料…')
+
+    def on_knowledge_searched(self, hits):
+        self._knowledge_sources = list(hits or [])
+        if self.request_session == self.active_session:
+            self.update_request_status()
 
     def refresh_chat_rail(self):
         if not hasattr(self, 'chat_rail'):
@@ -804,6 +882,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         if busy:
             if self.worker.cancel_event.is_set():
                 self.chat_status.setText('正在停止，等待连接释放（最长约45秒）')
+            elif getattr(self.worker, 'reading', False):
+                self.chat_status.setText('正在查本地资料…')
             elif getattr(self.worker, 'searching', False):
                 self.chat_status.setText('正在搜索资料…')
             else:
@@ -860,30 +940,37 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.retry_by_session.pop(self.active_session, None)
         self.retry_button.hide()
         if self.settings.get('model') and self.settings.get('base_url'):
-            self.start_request(self.store.messages(20, self.active_session), web_query='')
+            self.start_request(self.store.messages(20, self.active_session),
+                               web_query='', knowledge_query='')
         else:
             self.on_reply(local_plan(snapshot))
             self.update_request_status()
 
-    def start_request(self, messages, web_query=None):
+    def start_request(self, messages, web_query=None, knowledge_query=None):
         self.request_session = self.active_session
         self.task_choice.pop(self.request_session, None)
         self.stream_content = ''
         self._stream_rendered = ''
         self._search_sources = []
+        self._knowledge_sources = []
         self.stream_row = None
         self.error_row = None
         configured = bool(self.settings.get('model') and self.settings.get('base_url'))
         self.request_model = self.settings.get('model') if configured else ''
         self.request_started = time.monotonic()
-        if web_query is None:
+        if web_query is None or knowledge_query is None:
             last = next((m.get('content', '') for m in reversed(messages)
                          if m.get('role') == 'user'), '')
-            web_query = (last if (self.web_search_ready()
-                                  and self.settings.get('web_search_enabled', True)
-                                  and websearch.wants_web_search(last)) else '')
+            if web_query is None:
+                web_query = (last if (self.web_search_ready()
+                                      and self.settings.get('web_search_enabled', True)
+                                      and websearch.wants_web_search(last)) else '')
+            if knowledge_query is None:
+                knowledge_query = (last if (self.knowledge_ready()
+                                            and self.settings.get('knowledge_enabled', True)) else '')
         tasks = [dict(row) for row in self.store.pending()]
-        self.worker = AssistantWorker(self.settings, messages, tasks, self, web_query)
+        self.worker = AssistantWorker(self.settings, messages, tasks, self, web_query,
+                                      self.knowledge, knowledge_query)
         self.stream_timer.start()
         self.update_request_status()
         if self.request_session == self.active_session:
@@ -898,6 +985,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.worker.search_started.connect(self.on_search_started)
         self.worker.searched.connect(self.on_searched)
         self.worker.search_failed.connect(self.on_search_failed)
+        self.worker.knowledge_started.connect(self.on_knowledge_started)
+        self.worker.knowledge_searched.connect(self.on_knowledge_searched)
         self.worker.finished.connect(self.request_finished)
         self.worker.start()
 
@@ -958,6 +1047,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.stream_content = ''
         self.stream_row = None
         self._search_sources = []
+        self._knowledge_sources = []
         self.request_model = ''
         self.request_started = None
         self.update_request_status()
@@ -1138,6 +1228,8 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
             else:
                 row = self.history.append_message('assistant', reply)
                 row.set_meta(self._reply_meta())
+            if self._knowledge_sources:
+                self.history.set_materials(row, self._knowledge_sources)
             if self._search_sources:
                 self.history.set_sources(row, self._search_sources)
         if errors:
@@ -1330,6 +1422,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
 
     def closeEvent(self, event):
         if self.shutting_down:
+            self.knowledge.close()
             event.accept()
         elif self.tray.isVisible():
             self.hide()
@@ -1349,6 +1442,7 @@ class MainWindow(HomePageMixin, SettingsPageMixin, TasksPageMixin, QMainWindow):
         self.task_refresh_timer.stop()
         self.pet.close()
         self.tray.hide()
+        self.knowledge.close()
         self.store.close()
         QApplication.instance().quit()
 

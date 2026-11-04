@@ -58,7 +58,8 @@ class SettingsPageTests(unittest.TestCase):
 
         cards = window.settings_page.findChildren(PrefCard)
         self.assertEqual([card.title_label.text() for card in cards],
-                         ['模型与对话', '联网搜索', '提醒与免打扰', '外观与密度', '数据与隐私', '宠物形象', '钉钉群通知'])
+                         ['模型与对话', '联网搜索', '本地知识库', '提醒与免打扰', '外观与密度',
+                          '数据与隐私', '宠物形象', '钉钉群通知'])
         self.assertTrue(all(card.conclusion.text().strip() for card in cards))
         self.assertEqual(window.settings_content.width(), 760)
         self.assertEqual(window.settings_scroll.horizontalScrollBar().maximum(), 0)
@@ -237,6 +238,30 @@ class SettingsPageTests(unittest.TestCase):
         window.save_web_search_settings()
         self.assertFalse(self.saved()['web_search_enabled'])
         self.assertFalse(window.web_toggle.isChecked())
+
+    def test_knowledge_toggle_import_list_and_clear(self):
+        from PyQt5.QtWidgets import QMessageBox
+        window = self.window
+        window.knowledge_enabled.toggle()
+        self.assertFalse(self.saved()['knowledge_enabled'])
+        self.assertFalse(window.kb_toggle.isEnabled())
+        window.knowledge_enabled.toggle()
+        self.assertTrue(self.saved()['knowledge_enabled'])
+
+        doc = Path(self.temp.name) / '差旅制度.txt'
+        doc.write_text('一线城市住宿标准为每晚 600 元。', encoding='utf-8')
+        window.import_knowledge([str(doc)])
+        self.wait_for(lambda: not window._kb_busy)
+        self.assertEqual(window.kb_list.count(), 1)
+        self.assertIn('差旅制度.txt', window.kb_list.item(0).text())
+        self.assertIn('新增 1', window.knowledge_status.text())
+        self.assertTrue(window.kb_toggle.isEnabled())
+        self.assertTrue(window.kb_toggle.isChecked())
+
+        with patch('desktop_pet.ui.settings.QMessageBox.warning', return_value=QMessageBox.Yes):
+            window.clear_knowledge()
+        self.assertEqual(window.kb_list.count(), 0)
+        self.assertFalse(window.kb_toggle.isEnabled())
 
 
 if __name__ == '__main__':

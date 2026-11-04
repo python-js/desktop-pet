@@ -9,14 +9,15 @@ from pathlib import Path
 from PyQt5.QtCore import QPointF, QRectF, Qt, QTime, QUrl, pyqtSignal
 from PyQt5.QtGui import QColor, QDesktopServices, QFont, QImage, QImageReader, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (QAbstractButton, QAbstractSpinBox, QDialog, QFileDialog, QFrame,
-                             QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                             QScrollArea, QSizePolicy, QTimeEdit, QVBoxLayout, QWidget)
-from ..assistant import test_connection
+                             QGridLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+                             QMessageBox, QPushButton, QScrollArea, QSizePolicy, QTimeEdit,
+                             QVBoxLayout, QWidget)
+from ..assistant import RequestCancelled, test_connection
 from ..core import (DEFAULT_DND_END, DEFAULT_DND_START, parse_clock, validate_endpoint)
 from ..dingtalk import DingTalkError, send as dingtalk_send, validate_webhook
 from ..secure_storage import SecretStore
 from ..startup import StartupManager
-from .. import websearch
+from .. import knowledge, websearch
 from . import icons, tokens as T
 from .common import button, local_time
 from .components import ElidedLabel, Panel, Segmented, StatePill
@@ -394,7 +395,7 @@ class SettingsPageMixin:
             pass
         for key, default in (('early_nudge', True), ('sound_enabled', True),
                              ('auto_postpone', False), ('dnd_enabled', True),
-                             ('web_search_enabled', True)):
+                             ('web_search_enabled', True), ('knowledge_enabled', True)):
             if not isinstance(self.settings.get(key), bool):
                 self.settings[key] = default
         for key, default in (('dnd_start', DEFAULT_DND_START), ('dnd_end', DEFAULT_DND_END)):
@@ -470,6 +471,8 @@ class SettingsPageMixin:
     def build_settings(self):
         self._pref_rows = []
         self._danger_buttons = []
+        self._kb_busy = False
+        self._kb_cancel = threading.Event()
         self._pet_columns = 5
         self._settings_layout_state = None
         self._startup_checked = False
@@ -593,6 +596,42 @@ class SettingsPageMixin:
         row.add(self.websearch_status)
         card.add_row(row)
         content.addWidget(card)
+
+        card = PrefCard('book', '本地知识库',
+                        '导入 PDF / Word / Excel / txt / Markdown，回答前先查本地资料；'
+                        '资料内容会发送给已配置的模型整理。')
+        # 窄窗口下清单纯按可用宽度收缩，避免列表和按钮把设置页撑出横向滚动条。
+        card.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        row = PrefRow('检索开关', '没有资料时开关不可用；关闭后不再检索本地内容。')
+        self.knowledge_enabled = CheckLine('回答前查阅本地资料',
+                                           '每次只把最相关的几段资料随问题发送给模型。',
+                                           self.settings.get('knowledge_enabled', True))
+        self.knowledge_enabled.toggled.connect(self.change_knowledge_enabled)
+        row.add(self.knowledge_enabled)
+        card.add_row(row)
+
+        row = PrefRow('资料清单', '单文件不超过 30 MB；txt / md 之外需要重新安装以补齐解析组件。')
+        self.kb_list = QListWidget()
+        self.kb_list.setMinimumHeight(112)
+        self.kb_list.setMaximumHeight(180)
+        self.kb_list.setSelectionMode(QListWidget.SingleSelection)
+        self.kb_list.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        row.add(self.kb_list)
+        actions, action_row = _pref_actions()
+        self.kb_add_button = button('添加文件', self.add_knowledge_files, action_row)
+        self.kb_folder_button = button('添加文件夹', self.add_knowledge_folder, action_row)
+        self.kb_rebuild_button = button('重建 Wiki', self.rebuild_knowledge, action_row)
+        self.kb_remove_button = button('移除所选', self.remove_knowledge_selected, action_row)
+        self.kb_cancel_button = button('取消导入', self.cancel_knowledge_import, action_row)
+        self.kb_cancel_button.setEnabled(False)
+        self.kb_clear_button = button('清空资料', self.clear_knowledge, action_row)
+        self._danger_buttons.append(self.kb_clear_button)
+        row.add(actions)
+        self.knowledge_status = _pref_text(10, 'ink_3', wrap=True)
+        row.add(self.knowledge_status)
+        card.add_row(row)
+        content.addWidget(card)
+        self.refresh_knowledge_ui()
 
         card = PrefCard('bell', '提醒与免打扰',
                         '桌面气泡是主通道，钉钉只是备份。',
@@ -835,6 +874,14 @@ class SettingsPageMixin:
                         f'QPushButton:pressed {{background:{t.alert_wash};}}')
         for widget in self._danger_buttons:
             widget.setStyleSheet(danger_style)
+        if hasattr(self, 'kb_list'):
+            self.kb_list.setStyleSheet(
+                f'QListWidget {{background:{t.surface};border:1px solid {t.border};border-radius:8px;'
+                f'outline:0;padding:4px;color:{t.ink};font-family:"{T.FONT_UI}";font-size:12px;}}'
+                f'QListWidget::item {{padding:5px 6px;border-radius:6px;}}'
+                f'QListWidget::item:selected {{background:{t.brand_wash};color:{t.ink};}}'
+                f'QListWidget::item:hover {{background:{t.surface_2};}}'
+                f'QListWidget:disabled {{color:{t.ink_4};}}')
         for widget in self.settings_page.findChildren(QWidget):
             if hasattr(widget, 'refresh_theme'):
                 widget.refresh_theme()
@@ -1003,6 +1050,191 @@ class SettingsPageMixin:
         self.websearch_status.setText(message)
         self.statusBar().showMessage(message, 8000)
 
+    def change_knowledge_enabled(self, checked):
+        self.settings['knowledge_enabled'] = bool(checked)
+        self._persist_quick('知识库已开启，回答前会先查本地资料。' if checked else '知识库已关闭。')
+        if hasattr(self, 'update_knowledge_ui'):
+            self.update_knowledge_ui()
+
+    def refresh_knowledge_ui(self):
+        if not hasattr(self, 'kb_list'):
+            return
+        try:
+            docs = self.knowledge.documents()
+        except (OSError, ValueError, sqlite3.Error):
+            docs = []
+        current = self.kb_list.currentItem()
+        selected = current.data(Qt.UserRole) if current is not None else None
+        self.kb_list.clear()
+        for doc in docs:
+            when = str(doc.get('added_at') or '')[:16].replace('T', ' ')
+            text = f'{doc["name"]}　·　{doc.get("page_count", 0)} 段　·　{when}'
+            if doc.get('wiki_error'):
+                text += f'　·　Wiki 未生成：{doc["wiki_error"][:40]}'
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, doc['id'])
+            self.kb_list.addItem(item)
+            if doc['id'] == selected:
+                self.kb_list.setCurrentItem(item)
+        if hasattr(self, 'update_knowledge_ui'):
+            self.update_knowledge_ui()
+        if getattr(self, '_kb_busy', False):
+            return
+        if docs:
+            pages = sum(doc.get('page_count', 0) for doc in docs)
+            _pref_color(self.knowledge_status, 'calm')
+            self.knowledge_status.setText(
+                f'已收录 {len(docs)} 份资料、{pages} 段索引；回答前最多引用 {knowledge.MAX_HITS} 段。')
+        else:
+            _pref_color(self.knowledge_status, 'ink_3')
+            self.knowledge_status.setText('尚未添加资料。导入后即可在对话里引用本地内容。')
+
+    def _set_knowledge_busy(self, busy):
+        self._kb_busy = bool(busy)
+        for name in ('kb_add_button', 'kb_folder_button', 'kb_rebuild_button',
+                     'kb_remove_button', 'kb_clear_button'):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(not busy)
+        self.kb_list.setEnabled(not busy)
+        self.kb_cancel_button.setEnabled(bool(busy))
+
+    def add_knowledge_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, '添加资料', str(Path.home()),
+            '支持的资料 (*.pdf *.docx *.xlsx *.xlsm *.txt *.md *.markdown *.csv);;所有文件 (*.*)')
+        if paths:
+            self.import_knowledge(paths)
+
+    def add_knowledge_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, '添加资料文件夹', str(Path.home()))
+        if folder:
+            self.import_knowledge([folder])
+
+    def import_knowledge(self, paths, force=False):
+        if self._kb_busy:
+            return
+        self._kb_cancel.clear()
+        self._set_knowledge_busy(True)
+        _pref_color(self.knowledge_status, 'ink_3')
+        self.knowledge_status.setText(f'正在导入 {len(paths)} 项资料…')
+        settings = dict(self.settings)
+
+        def work():
+            added = updated = skipped = failed = 0
+            errors, cancelled = [], False
+            for path in paths:
+                if self._kb_cancel.is_set():
+                    cancelled = True
+                    break
+                try:
+                    if Path(path).is_dir():
+                        results = self.knowledge.add_folder(path, settings, self.knowledge_progress.emit,
+                                                            self._kb_cancel.is_set, force=force)
+                    else:
+                        results = [self.knowledge.add_file(path, settings, self.knowledge_progress.emit,
+                                                           self._kb_cancel.is_set, force=force)]
+                except RequestCancelled:
+                    cancelled = True
+                    break
+                except (OSError, ValueError) as exc:
+                    failed += 1
+                    if len(errors) < 3:
+                        errors.append(f'{Path(path).name}：{exc}')
+                    continue
+                for item in results:
+                    status = item.get('status')
+                    if status == 'added':
+                        added += 1
+                    elif status == 'updated':
+                        updated += 1
+                    elif status == 'skipped':
+                        skipped += 1
+                    else:
+                        failed += 1
+                    if item.get('error') and len(errors) < 3:
+                        errors.append(f'{item.get("name")}：{item["error"]}')
+                    elif item.get('wiki_error') and len(errors) < 3:
+                        errors.append(f'{item.get("name")}：Wiki 未生成（{item["wiki_error"]}）')
+            summary = f'导入{"已取消" if cancelled else "完成"}：新增 {added}，更新 {updated}，' \
+                      f'跳过 {skipped}，失败 {failed}。'
+            if errors:
+                summary += ' ' + '；'.join(errors)
+            try:
+                self.knowledge_imported.emit(summary, not failed and not cancelled)
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_knowledge_progress(self, message):
+        if hasattr(self, 'knowledge_status'):
+            _pref_color(self.knowledge_status, 'ink_3')
+            self.knowledge_status.setText(message)
+
+    def on_knowledge_imported(self, summary, ok):
+        self._set_knowledge_busy(False)
+        self.refresh_knowledge_ui()
+        _pref_color(self.knowledge_status, 'calm' if ok else 'alert')
+        self.knowledge_status.setText(summary)
+        self.statusBar().showMessage(summary, 8000)
+
+    def cancel_knowledge_import(self):
+        if not self._kb_busy:
+            return
+        self._kb_cancel.set()
+        _pref_color(self.knowledge_status, 'ink_3')
+        self.knowledge_status.setText('正在取消，当前文件处理完后停止…')
+
+    def rebuild_knowledge(self):
+        try:
+            paths = [doc['source_path'] for doc in self.knowledge.documents()
+                     if Path(doc['source_path']).is_file()]
+        except (OSError, ValueError, sqlite3.Error):
+            paths = []
+        if not paths:
+            _pref_color(self.knowledge_status, 'alert')
+            self.knowledge_status.setText('没有可重建的资料：原始文件已被移动或删除。')
+            return
+        note = '会用当前模型重新整理每份资料的 Wiki，可能产生多次模型调用。'
+        if QMessageBox.question(self, '重建 Wiki', f'将处理 {len(paths)} 份资料。{note}继续？') != QMessageBox.Yes:
+            return
+        self.import_knowledge(paths, force=True)
+
+    def remove_knowledge_selected(self):
+        item = self.kb_list.currentItem()
+        if item is None:
+            _pref_color(self.knowledge_status, 'ink_3')
+            self.knowledge_status.setText('请先在清单中选择一份资料。')
+            return
+        name = item.text().split('　·　')[0]
+        if QMessageBox.question(self, '移除资料', f'从知识库移除《{name}》？原始文件不会被删除。') != QMessageBox.Yes:
+            return
+        try:
+            self.knowledge.remove(item.data(Qt.UserRole))
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, '移除未完成', str(exc))
+            return
+        self.refresh_knowledge_ui()
+        self.statusBar().showMessage(f'已移除《{name}》。', 5000)
+
+    def clear_knowledge(self):
+        if not self.knowledge.stats()['docs']:
+            return
+        answer = QMessageBox.warning(
+            self, '清空知识库',
+            '将删除全部已导入的资料索引与 Wiki。原始文件不会被删除。继续？',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            self.knowledge.clear()
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            QMessageBox.warning(self, '清空未完成', str(exc))
+            return
+        self.refresh_knowledge_ui()
+        self.statusBar().showMessage('知识库已清空。', 5000)
+
     def export_settings_data(self):
         name = f'desktop-pet-export-{datetime.now():%Y%m%d}.json'
         path, _ = QFileDialog.getSaveFileName(self, '导出数据', str(Path.home() / name),
@@ -1067,7 +1299,7 @@ class SettingsPageMixin:
                    'remember_key', 'pet_position', 'pet_paused', 'pet_walking', 'pet_animations',
                    'pet_animation_backup', 'pet_mode', 'theme', 'density', 'early_nudge', 'sound_enabled',
                    'auto_postpone', 'dnd_enabled', 'dnd_start', 'dnd_end', 'sidebar_collapsed',
-                   'web_search_enabled')
+                   'web_search_enabled', 'knowledge_enabled')
         temp.write_text(json.dumps({k: settings[k] for k in allowed if k in settings}, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(path)
 

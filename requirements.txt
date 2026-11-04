@@ -1,3 +1,6 @@
 PyQt5==5.15.11
 PyQtWebEngine==5.15.7
 PyQt-Fluent-Widgets==1.8.7
+pypdf==6.21.4
+python-docx==1.2.0
+openpyxl==3.1.5

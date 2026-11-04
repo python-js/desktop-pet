@@ -222,6 +222,45 @@ def test_connection(settings, timeout=8):
         raise ValueError('连接失败：服务返回格式不兼容') from None
 
 
+def complete(settings, system, user, cancelled=None, timeout=90):
+    """Non-streaming completion used by knowledge compilation; no task protocol."""
+    cancelled = cancelled or (lambda: False)
+    base = str(settings.get('base_url') or '').strip()
+    model = str(settings.get('model') or '').strip()
+    if not base or not model:
+        raise ValueError('请先填写服务地址和模型')
+    if cancelled():
+        raise RequestCancelled()
+    endpoint = validate_endpoint(base) + '/chat/completions'
+    body = json.dumps({'model': model, 'stream': False,
+                       'messages': [{'role': 'system', 'content': system},
+                                    {'role': 'user', 'content': user}]}).encode('utf-8')
+    headers = {'Content-Type': 'application/json'}
+    if settings.get('api_key'):
+        headers['Authorization'] = 'Bearer ' + settings['api_key']
+    req = request.Request(endpoint, data=body, headers=headers, method='POST')
+    try:
+        with request.build_opener(NoRedirect()).open(req, timeout=timeout) as response:
+            data = response.read(2 * 1024 * 1024 + 1)
+        if cancelled():
+            raise RequestCancelled()
+        if len(data) > 2 * 1024 * 1024:
+            raise ValueError('模型输出过大')
+        payload = json.loads(data)
+        content = payload['choices'][0]['message']['content']
+        if not isinstance(content, str):
+            raise ValueError('服务返回了不支持的消息格式')
+        return content
+    except RequestCancelled:
+        raise
+    except error.HTTPError as exc:
+        raise ValueError(f'模型服务返回 HTTP {exc.code}，请检查地址、模型、鉴权或额度。') from None
+    except (error.URLError, TimeoutError, OSError):
+        raise ValueError('无法连接模型服务或请求超时，请检查网络和服务地址。') from None
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        raise ValueError('服务返回格式不兼容，请确认支持 Chat Completions 接口。') from None
+
+
 def ask(settings, messages, on_chunk=None, cancelled=None, tasks=None, search_context=None):
     cancelled = cancelled or (lambda: False)
     if cancelled():

@@ -231,6 +231,12 @@ class MessageRow(QWidget):
         self.text = MessageText('', self.bubble)
         self.text.refresh_theme(self.user)
         body.addWidget(self.text)
+        self.materials = QLabel('')
+        self.materials.setTextFormat(Qt.PlainText)
+        self.materials.setWordWrap(True)
+        self.materials.hide()
+        body.addWidget(self.materials)
+        self._materials = []
         self.sources = QLabel('')
         self.sources.setTextFormat(Qt.RichText)
         self.sources.setOpenExternalLinks(True)
@@ -279,6 +285,26 @@ class MessageRow(QWidget):
         width = min(self.text.natural_width(), text_limit)
         if self.text.width() != width:
             self.text.setFixedWidth(width)
+
+    def set_materials(self, hits):
+        self._materials = []
+        for item in hits or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get('doc_name') or item.get('title') or '').strip()
+            if name and name not in self._materials:
+                self._materials.append(name)
+            if len(self._materials) == 4:
+                break
+        self._render_materials()
+
+    def _render_materials(self):
+        if not self._materials:
+            self.materials.hide()
+            self.materials.clear()
+            return
+        self.materials.setText('资料：' + '　·　'.join(f'《{name}》' for name in self._materials))
+        self.materials.show()
 
     def set_sources(self, sources):
         self._sources = [(str(item.get('title') or item.get('url') or ''),
@@ -364,8 +390,11 @@ class MessageRow(QWidget):
         if self.meta is not None:
             self.meta.setStyleSheet(f'background:transparent;color:{t.ink_4};'
                                     f'font-family:"{T.FONT_UI}";font-size:10px;')
+        self.materials.setStyleSheet(f'background:transparent;color:{t.ink_3};'
+                                     f'font-family:"{T.FONT_UI}";font-size:10px;')
         self.sources.setStyleSheet(f'background:transparent;color:{t.ink_3};'
                                    f'font-family:"{T.FONT_UI}";font-size:10px;')
+        self._render_materials()
         self._render_sources()
         if self._error_box is not None:
             self._error_box.setStyleSheet(f'QFrame#chatError{{background:{t.alert_wash};'
@@ -500,6 +529,13 @@ class MessageHistory(SmoothScrollArea):
         bar = self.verticalScrollBar()
         follow = bar.maximum() - bar.value() < 60
         row.set_sources(sources)
+        if follow:
+            self._follow_timer.start(100)
+
+    def set_materials(self, row, hits):
+        bar = self.verticalScrollBar()
+        follow = bar.maximum() - bar.value() < 60
+        row.set_materials(hits)
         if follow:
             self._follow_timer.start(100)
 

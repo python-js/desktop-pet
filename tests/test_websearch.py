@@ -30,7 +30,8 @@ PAYLOAD = {
 class IntentTests(unittest.TestCase):
     def test_search_signals(self):
         for text in ('帮我查一下最新金价', '今天北京天气怎么样', '搜索 Python 3.14 发布说明',
-                     '这个版本更新了什么', 'latest release notes'):
+                     '这个版本更新了什么', 'latest release notes', '现在比特币多少钱',
+                     '今天有什么新闻'):
             self.assertTrue(wants_web_search(text), text)
 
     def test_task_wording_does_not_consume_search(self):
@@ -56,9 +57,41 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(body['max_results'], 5)
             self.assertTrue(body['include_answer'])
             self.assertFalse(body['include_raw_content'])
+            self.assertEqual(body['topic'], 'general')
+            self.assertEqual(body['time_range'], 'day')
             self.assertEqual(len(result['results']), 2)
             self.assertLessEqual(len(result['results'][0]['content']), 500)
             self.assertEqual(result['results'][1]['url'], 'http://example.org/a')
+
+    def test_freshness_parameters_follow_question_type(self):
+        cases = {
+            '今天有什么新闻': {'topic': 'news', 'days': 3},
+            '最新金价': {'topic': 'general', 'time_range': 'day'},
+            '最近汇率走势': {'topic': 'general', 'time_range': 'week'},
+            '查一下报销政策': {'topic': 'general'},
+        }
+        for query, expected in cases.items():
+            with patch('desktop_pet.websearch.request.build_opener') as opener:
+                opener.return_value.open.return_value = Response(json.dumps(PAYLOAD).encode())
+                tavily_search('tvly-test', query)
+                body = json.loads(opener.return_value.open.call_args.args[0].data)
+                for key, value in expected.items():
+                    self.assertEqual(body.get(key), value, (query, key))
+                if expected['topic'] != 'news':
+                    self.assertNotIn('days', body)
+                if 'time_range' not in expected:
+                    self.assertNotIn('time_range', body)
+
+    def test_published_date_is_kept_and_shown(self):
+        payload = {'results': [{'title': '新闻', 'url': 'https://example.com/n',
+                                'content': '内容', 'published_date': '2026-11-04T08:00:00Z'}]}
+        with patch('desktop_pet.websearch.request.build_opener') as opener:
+            opener.return_value.open.return_value = Response(json.dumps(payload).encode())
+            result = tavily_search('tvly-test', '今天有什么新闻')
+        self.assertEqual(result['results'][0]['published_date'], '2026-11-04T08:00:00Z')
+        context = format_context(result)
+        self.assertIn('发布于 2026-11-04T08:00:00Z', context)
+        self.assertIn('优先采用最新', context)
 
     def test_cache_reuses_recent_query(self):
         with patch('desktop_pet.websearch.request.build_opener') as opener:

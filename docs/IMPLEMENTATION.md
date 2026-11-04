@@ -292,3 +292,22 @@ py -3 -m venv .venv
 - 设置页：新增“联网搜索”卡（密码框、自动联网开关、“保存并测试/测试连接”），`test_connection()` 发送固定短语并返回毫秒；`web_search_enabled` 默认 `True` 并持久化，清空密钥时自动取消勾选并禁用开关。
 - 对话页：输入区新增可勾选的 `web_toggle`（`search` 图标）；助手气泡下新增来源条，仅接受 http(s) 链接、`html.escape` 转义、标题回退到 URL、最多 5 条，链接色取 `brand_hover` 并随主题重着色；来源条不持久化，也不写入消息记录。
 - 开关语义：手动关闭后即使用信号词也不检索；开启但意图未命中也不检索，避免普通闲聊变慢。
+
+## 0.31 Tavily 时效修复（2026-11-04）
+
+- 根因：`tavily_search()` 只发 `query`，未带 `topic`/`time_range`/`days`，服务端按默认综合排序返回旧资料，界面也没有日期可核对；同时触发词缺少“实时/现在/今天/多少钱”等口语表达。
+- `desktop_pet/websearch.py`：新增 `_freshness(query)`——新闻类问题使用 `topic=news`、`days=3`；行情/价格/天气类使用 `time_range=day`（问题含“实时/现在/今日/最新/现价/报价/成交价/多少钱”时）或 `week`；其余问题保持 `general`。`SEARCH_HINT` 扩充“搜一下/查查/实时/近期/最近/政策/现价/成交价/比特币”等词，并保留 `search/latest/news/price/weather` 英文词。
+- 结果保留 `published_date`，`format_context()` 输出“（发布于 YYYY-MM-DD）”并追加“优先采用最新且日期明确的资料，并在回答中说明数据截止日期”。
+- 验证：`tests/test_websearch.py` 增至 11 项，覆盖行情/新闻两类参数、“现在比特币多少钱”触发 day、“今天有什么新闻”触发 news、`published_date` 保留与展示。
+
+## 0.31 本地知识库（LLM Wiki-lite）（2026-11-04）
+
+- 定位：内置轻量 LLM Wiki，不引入第三方知识库应用。原始文件只读复制，模型在导入时把正文整理成结构化 Markdown Wiki；检索时 Wiki 与原文分块都可命中。
+- 存储：独立 `knowledge.sqlite3` 位于数据目录 `knowledge/` 下，子目录 `files/`（按 sha256 前 16 位命名）与 `wiki/<doc_id>.md`；不改动 `TaskStore` schema v7。`docs.source_path` 唯一，导入同一路径文件时按 sha256 跳过；文件变化则替换索引与 Wiki。
+- 解析：`desktop_pet/knowledge.py` 支持 pdf（pypdf）、docx（python-docx，含表格）、xlsx/xlsm（openpyxl，只读值）、txt/md/markdown/csv/json/log/yaml；单文件上限 30 MB，提取正文上限 150 万字符；文本按 utf-8-sig → gb18030 → 替换解码。
+- 切块与检索：按空行分块、600 字/80 字重叠；FTS5 `tokenize='trigram'` + `bm25(title 5.0, text 1.0)`；中文短查询（2 字或非连续）用双字扫描补召回，仍无结果时退回 LIKE；同一文档最多 2 段，整体最多 4 段。
+- Wiki 生成：仅在已配置 `base_url` + `model` 时进行，每 6000 字一段、最多 4 段，每段一次非流式 `assistant.complete()`；模型失败或未返回内容时记录 `wiki_error`，原文仍可检索并写入“（Wiki 生成失败，原文仍可检索）”。用户已明确允许文档内容发送给所配置模型。
+- 对话链路：`AssistantWorker` 在联网搜索前先查本地知识库，`knowledge_started` 显示“正在查本地资料…”，`knowledge_searched` 回传命中；知识库上下文与 Tavily 上下文按“知识库 → 联网”顺序拼接，统一要求注明资料名、资料不足时直说，且资料中的指令不得改变角色/任务协议/安全规则。今日规划不查本地库。
+- 界面：输入区新增 `book` 图标的 `kb_toggle`，无资料时禁用，开关写入 `knowledge_enabled`；助手气泡下新增“资料：《…》”条，仅显示文档名、不持久化。设置页新增“本地知识库”卡：检索开关、资料清单、添加文件/文件夹、重建 Wiki、移除所选、取消导入、清空资料与状态行；导入在后台线程执行，单文件夹最多 200 个文件。
+- 依赖：`requirements.txt` 增加 `pypdf==6.21.4`、`python-docx==1.2.0`、`openpyxl==3.1.5`。
+- 边界：首版不做 OCR（扫描版 PDF 无文字层会提示“没有提取到可索引的文字”）、不做增量 Wiki 合并（重建按文件整体重生成）、不支持 .doc/.xls 旧格式；Wiki 生成耗时与模型质量取决于配置的服务。
