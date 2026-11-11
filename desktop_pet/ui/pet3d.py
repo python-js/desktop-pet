@@ -1,14 +1,28 @@
 """Local three.js pet canvas; WebEngine stays optional and is imported on first use."""
+import os
+import sys
 from pathlib import Path
 
-from PyQt5.QtCore import QEvent, Qt, QUrl
-from PyQt5.QtWidgets import QWidget
+from PySide6.QtCore import QEvent, Qt, QUrl
+from PySide6.QtWidgets import QWidget
 
-SCENE = Path(__file__).resolve().parent.parent / 'assets' / 'pet3d' / 'index.html'
+
+def scene_path():
+    # 页面随 web 工程构建，打包后在 _internal/web/pet3d；源码运行时直接用 web/public 下的原件。
+    override = os.environ.get('DESKTOP_PET_WEB_DIST')
+    if override:
+        return Path(override) / 'pet3d' / 'index.html'
+    frozen = getattr(sys, '_MEIPASS', None)
+    if frozen:
+        return Path(frozen) / 'web' / 'pet3d' / 'index.html'
+    return Path(__file__).resolve().parents[2] / 'web' / 'public' / 'pet3d' / 'index.html'
+
+
+SCENE = scene_path()
 
 
 def create_view(parent=None, event_filter=None):
-    from PyQt5.QtWebEngineWidgets import QWebEngineView
+    from PySide6.QtWebEngineWidgets import QWebEngineView
 
     class Pet3DView(QWebEngineView):
         def __init__(self):

@@ -3,6 +3,8 @@ import os
 import sys
 from pathlib import Path
 
+from PySide6.QtWidgets import QSystemTrayIcon
+
 
 def data_directory():
     override = os.environ.get('DESKTOP_PET_DATA_DIR')
@@ -20,4 +22,4 @@ def data_directory():
 
 def notify(tray, title, message):
     if tray and tray.isVisible() and tray.supportsMessages():
-        tray.showMessage(title, message, tray.Information, 10000)
+        tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 10000)

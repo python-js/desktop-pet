@@ -38,7 +38,8 @@ class PackagingTests(unittest.TestCase):
                            check=True, env=env, capture_output=True, timeout=30)
             result = json.loads(report.read_text(encoding='utf-8'))
             self.assertTrue(result['ok'])
-            self.assertEqual(result['checks'], ['qt-offscreen', 'sqlite', 'pet-image', 'pet3d-assets'])
+            self.assertEqual(result['checks'], ['qt-offscreen', 'sqlite', 'pet-image',
+                                               'pet3d-assets', 'web-bundle'])
             self.assertFalse(data.exists())
 
     def test_build_command_has_explicit_entry_output_and_no_source_data(self):
@@ -52,7 +53,8 @@ class PackagingTests(unittest.TestCase):
             self.assertIn('--onedir', command)
             self.assertEqual(command[-1], str(ROOT / 'launch.py'))
             data_index = command.index('--add-data')
-            self.assertTrue(command[data_index + 1].endswith(';desktop_pet/assets'))
+            self.assertTrue(command[data_index + 1].endswith(';web'))
+            self.assertNotIn('desktop_pet/assets', command)
             self.assertNotIn('--noconfirm', command)
             with patch.object(build.metadata, 'version', side_effect=build.metadata.PackageNotFoundError):
                 with self.assertRaises(SystemExit):

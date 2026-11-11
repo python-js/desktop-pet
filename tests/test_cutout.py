@@ -50,15 +50,15 @@ class CutoutTests(unittest.TestCase):
 class CutoutUiTests(unittest.TestCase):
     def setUp(self):
         os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-        from PyQt5.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
         self.app = QApplication.instance() or QApplication([])
 
     def image(self):
-        from PyQt5.QtGui import QImage
+        from PySide6.QtGui import QImage
         return QImage(sample(), 7, 7, 28, QImage.Format_RGBA8888).copy()
 
     def wait_worker(self, dialog):
-        from PyQt5.QtTest import QTest
+        from PySide6.QtTest import QTest
         for _ in range(400):
             QTest.qWait(10)
             if dialog.worker is None:
@@ -84,6 +84,7 @@ class CutoutUiTests(unittest.TestCase):
             self.app.processEvents()
 
     def test_cancel_waits_for_worker(self):
+        from PySide6.QtWidgets import QDialog
         from desktop_pet.ui.cutout import CutoutDialog
         gate = threading.Event()
         def delayed(*args):
@@ -98,7 +99,7 @@ class CutoutUiTests(unittest.TestCase):
                 gate.set()
                 self.wait_worker(dialog)
             self.assertTrue(dialog.result_image.isNull())
-            self.assertEqual(dialog.result(), dialog.Rejected)
+            self.assertEqual(dialog.result(), QDialog.Rejected)
         finally:
             gate.set()
             dialog.deleteLater()
@@ -107,7 +108,7 @@ class CutoutUiTests(unittest.TestCase):
     def test_apply_restart_restore_and_save_failure(self):
         from desktop_pet.app import MainWindow
         from desktop_pet.ui.cutout import CutoutDialog
-        from PyQt5.QtWidgets import QDialog
+        from PySide6.QtWidgets import QDialog
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
             original = str(Path(folder) / 'original.png')
             self.image().save(original)
@@ -118,14 +119,14 @@ class CutoutUiTests(unittest.TestCase):
                 window.settings['pet_images'] = [{'image': original}]
                 window.persist_settings()
                 before = dict(window.settings)
-                with patch.object(CutoutDialog, 'exec_', return_value=QDialog.Rejected):
+                with patch.object(CutoutDialog, 'exec', return_value=QDialog.Rejected):
                     window.remove_image_background()
                 self.assertEqual(window.settings, before)
                 def accept_preview(dialog):
                     dialog.result_image = self.image()
                     return QDialog.Accepted
-                with patch.object(CutoutDialog, 'exec_', accept_preview):
-                    with patch.object(window, 'persist_settings', side_effect=OSError), patch('desktop_pet.ui.settings.QMessageBox.warning'):
+                with patch.object(CutoutDialog, 'exec', accept_preview):
+                    with patch.object(window, 'persist_settings', side_effect=OSError), patch('desktop_pet.shell.QMessageBox.warning'):
                         window.remove_image_background()
                     self.assertEqual(window.settings, before)
                     self.assertEqual(list(Path(folder).glob('pet-cutout-*')), [])
@@ -145,7 +146,6 @@ class CutoutUiTests(unittest.TestCase):
                 for item in windows:
                     item.shutting_down = True
                     item.timer.stop()
-                    item.task_refresh_timer.stop()
                     item.pet.close()
                     item.tray.hide()
                     item.close()

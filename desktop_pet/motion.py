@@ -1,8 +1,8 @@
 """Generate basic whole-image motion locally; no semantic or skeletal synthesis."""
 import math
 from pathlib import Path
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QImage, QPainter
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QPainter
 from .animations import ACTION_LABELS
 
 # Hover is a single short hop; static actions keep 16 frames at 10 fps.

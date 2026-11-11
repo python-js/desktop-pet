@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QImage, QColor
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QImage, QColor
 from desktop_pet.animations import import_sequence, load_sequences
 
 
@@ -76,7 +76,6 @@ class AnimationTests(unittest.TestCase):
                 for item in windows:
                     item.shutting_down = True
                     item.timer.stop()
-                    item.task_refresh_timer.stop()
                     item.pet.close()
                     item.tray.hide()
                     item.close()
@@ -101,7 +100,6 @@ class AnimationTests(unittest.TestCase):
             finally:
                 window.shutting_down = True
                 window.timer.stop()
-                window.task_refresh_timer.stop()
                 window.pet.close()
                 window.tray.hide()
                 window.close()

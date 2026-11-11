@@ -5,3 +5,7 @@ __pycache__/
 build/
 dist/
 .artifacts/
+
+web/node_modules/
+web/dist/
+node_modules

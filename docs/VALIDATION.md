@@ -1,5 +1,7 @@
 # 验证记录
 
+> 本文记录不同时间点的验证，不能将旧记录直接等同于当前工作区的回归结果。Phase 5 已删除全部主窗口 Qt 页面与 Fluent 依赖；旧 Qt 页面测试条目仅供追溯，当前工作区测试数量、WebEngine 与目标机验收以对应日期的记录为准。桌宠仍使用 Qt 宿主。
+
 日期：2026-10-26；环境：Windows，Python 3.11.9。
 
 ## 已完成
@@ -282,3 +284,64 @@ PyInstaller 6.16.0现已安装。构建windows-0.14.0-20261027-100626-725051完�
 - 设置页：`tests/test_settings_page.py` 8 项通过——新增 `test_knowledge_toggle_import_list_and_clear`：开关即时写入 `settings.json`、无资料时对话开关禁用、后台导入 1 份 txt 后清单出现且状态含“新增 1”、清空后清单为空并再次禁用；卡片标题断言加入“本地知识库”；1440/1180/900 三档仍无横向滚动（知识库卡窄窗按可用宽度收缩）。
 - 截图证据：`.artifacts/knowledge-shots/settings-knowledge-{1440,900}-{light,dark}.png`、`chat-knowledge-materials-{light,dark}.png`，生成脚本 `.artifacts/capture_knowledge.py`（临时数据目录，导入两份合成资料，示例端点，无真实密钥）。逐张检查：1440/900 资料卡在纸白/夜幕下标题、开关、清单与六个按钮完整，900 宽六按钮仍单行且横向滚动为 0；聊天页助手气泡下资料条与来源条同时存在时层级正常，暗色下资料条为 `ink_3`、正文对比正常。
 - 真实 Wiki 边界：使用本机已配置的模型与 DPAPI 密钥做真实导入冒烟（合成《差旅报销简则》，不涉及用户资料），该端点当前对本机 Python 3.11 OpenSSL 返回 `SSL: UNEXPECTED_EOF_WHILE_READING`（curl 直连可建立 TLS），`test_connection` 同样报“20 秒内无法连接服务”，因此本轮未能取得真实 Wiki 文本；失败路径已验证会保留原文索引并记录 `wiki_error`。需在可连通的网络或更换端点后复测 Wiki 生成质量与耗时。
+
+## web 模式提醒卡点击抖动修复（2026-11-10）
+
+- 根因：`bridge_modules` 在任务变更后调用 `window.refresh_tasks()`；web 模式下该方法仍渲染隐藏的 Qt 待办页，并用 `frozen_updates(self)` 冻结整个主窗口。待办较多时冻结约 0.78s，期间 WebEngine 画面停住，解冻后整块重绘，表现为点击提醒卡后页面抖动。
+- 修复：`TasksPageMixin.refresh_tasks()` 在 `web_shell` 挂载时直接返回，HTML 侧继续依赖 `tasks.changed` 自取数据；qt 模式行为不变。
+- 证据：真实窗口探针 `.artifacts/reminder_jitter_probe.py`（980×640、8 条待办）显示点击后整窗 `setUpdatesEnabled(False)` 调用从 1 次降为 0，`refresh_tasks` 耗时约 770ms 降为 0ms；`aside/main` 坐标与滚动宽度全程不变，布局位移仅卡片移除带来的 CLS 0.009/0.017。
+- 三个按钮逐一复测（同一探针，按卡片标题定位）：完成 → `status=done`；10 分钟后 → `status=pending`、`due_at` 为当前 +10 分钟、`notified_at=NULL`；今天别再说 → `status=pending`、`muted_until` 为当天本地日期。三者均无整窗冻结、`refresh_tasks` 均为 0ms、`aside/main` 坐标与滚动区稳定，点击后提醒卡都从 DOM 移除；仅完成时主列表任务行上移产生 0.017 的 CLS，顺延/免打扰的位移为 ≤0.00002/0。
+- 二次复测（用户反馈顺延仍闪烁）：DOM 坐标稳定不代表不卡顿。用真实数据库副本、1180×820 的 `.artifacts/reminder_lag_probe.py` 测得点击时 Qt 主线程事件循环最长阻塞 102ms，其中 `refresh_home()` 重绘隐藏 Qt 首页独占 91ms，WebEngine 呈现随之停顿后跳帧。首轮修复只挡住了 `refresh_tasks()`，遗漏了同一路径上的 `refresh_home()`。
+- 修复：`HomePageMixin.refresh_home()` 在 `web_shell` 挂载时同样直接返回；`refresh_pet_tag()` 仍由 bridge 单独调用（实测 1.6ms），不受影响。qt 模式行为不变。
+- 证据：修复后同一探针 `refresh_tasks=0ms`、`refresh_home=0ms`、`refresh_pet_tag=1.6ms`，主线程最长延迟 102ms→22ms；点击附近渲染帧最大间隔 28ms（此前抓帧探针显示约 295ms，但抓帧本身会干扰渲染），数据库状态与按钮语义一致。注意：探针窗口使用临时数据目录（假待办），不是用户的数据实例。
+- 回归：`tests/test_ui.py` + `tests/test_bridge_modules.py` 共 63 项通过（含 web 模式动作与任务桥）；Phase 2 web 提醒 18/18、Phase 3 聊天 24/24 通过；qt 模式 `test_ui.py` 15 项通过；全量 224 项测试通过，收尾无 closed database 报错。
+
+## 宠物窗并入 web 工程（Phase 4，2026-11-10）
+
+- 迁移：`desktop_pet/assets/pet3d/`（页面、three.js r147、GLTFLoader、husky/fox 模型与许可证）整体移到 `web/public/pet3d/`，由 vite 构建原样复制到 `web/dist/pet3d/`。3D 页面保持普通 script（不引入 npm three），`window.pet3d` 的 `setPaused/lookAt/react/setDragging/setWalking` 契约与 `pet.py` 调用未改。`ui/pet3d.py` 的 `scene_path()` 源码运行读 `web/public/pet3d`、冻结后读 `_MEIPASS/web/pet3d`、`DESKTOP_PET_WEB_DIST` 可覆盖；`tools/build_windows.py` 去掉 `desktop_pet/assets` 打包项并改查 `_internal/web/pet3d`。
+- 决策：2D 帧动画与气泡保留 Qt（计划 4.2 取消、4.3 结论）。2D 动作帧是数据目录 `animations/` 下的 256×256 PNG（每动作最多 24 帧），迁 HTML 需额外提供本地图片服务/data URL、透明留白补偿与逐帧计时；气泡是 2D/3D 共用 QLabel，位于窗口顶部 0–88px 的 3D 画布之外，迁页面需要把 WebEngine 扩到全窗并分叉两套截断逻辑。
+- 交互回归：`.artifacts/pet3d_phase4_check.py`（真实窗口 + 桩 owner，临时目录）18 项检查全部符合预期——页面 URL 指向 `web/public/pet3d/index.html` 且 `window.pet3d` 为对象；单击触发一次 `react` 并显示气泡“摸摸收到…”；拖动事件过滤器使窗口位移 40×30 且 `pet_position` 同步写入；双击转发 `show_main` 1 次；右键菜单 7 项完整；`setWalking(true,-1)`、`setPaused(true/false)` 均到达页面；巡逻 1.2 秒产生实际位移并可停止；切 2D 后 220×260 且动画定时器运行，切回 3D 后 220×340、视图可见。结果存 `.artifacts/pet3d-phase4-check.json`。
+- 构建与冻结路径：`npm run build` 产物包含 `dist/pet3d/index.html` 与 three.js/GLTFLoader/husky.glb.js；用临时 `_MEIPASS` 验证冻结路径与三个资产存在。完整 PyInstaller 构建（`.artifacts/buildenv` 安装 PyInstaller 6.16.0，复用 pyenv 的 PySide6）通过自带 smoke-test，产物 `dist/windows-0.30.1-20261110-121945-894252`；用临时数据目录启动打包 exe，截图确认 3D 哈士奇与启动气泡均由 `_internal/web/pet3d` 渲染（`.artifacts/pet-packaged-3d.png`）。
+- 回归：全量 224 项 Python 测试通过（`QT_QPA_PLATFORM=offscreen PYTHONPATH=tests python -m unittest discover -s tests`，381s）。
+- 稳定性与常驻：打包实例（隔离数据目录）5 分钟取样，主进程工作集 262.3→212.9 MB、渲染子进程 80.7 MB 稳定，进程树约 343→299 MB，无退出或重载；源码版真实数据运行 30 分钟，进程树 487.0→442.2 MB（12:49 中段峰值 512.6 MB，属 WebEngine 分配回收波动），主进程 313.7→260.2 MB，两个渲染子进程 PID 自启动（12:33:26）未变，`Responding=True`，宠物窗持续正常渲染（`.artifacts/pet-live-source-p4.png`）。
+- 未覆盖边界：打包版 30 分钟常驻、多屏 `ensureVisible` 与休眠唤醒需在目标机器补测；本轮为单屏 2560×1440@1x。
+
+## Phase 5 收尾：删除 Qt 页面、web 成为唯一界面（2026-11-10）
+
+- 代码：新增 `desktop_pet/shell.py`（`ShellMixin`：配置持久化、DPAPI 密钥恢复、宠物图片/去背景/动作清理、主题与位置），`app.py` 仅保留 `AssistantWorker`、任务操作、提醒调度、托盘与宠物窗；删除 `ui/{home,tasks,settings,chat_rail,chat_widgets,draft_card,reminder,pet_tag,components,controls,fluent,motion,common,icons}.py` 及 `tools/check_fluent.py`、`requirements-fluent.txt`、`launch-fluent.ps1`。桥模块同步移除 `refresh_*`/`register_deleted` 等 Qt 页面钩子，web 侧统一依赖 `tasks.changed` / `chat.changed` 事件重拉。
+- 开关与依赖：`shell.persist_settings`、`settings.getAll` 白名单、`web/src/api.ts` 删除 `ui_shell` / `sidebar_collapsed`；`requirements.txt` 只保留 PySide6/pypdf/python-docx/openpyxl；`diagnostics` 改为 `ui_backend: web` 的 5 项自检（qt-offscreen、sqlite、pet-image、pet3d-assets、web-bundle），不再创建 MainWindow。
+- 测试适配：删除 9 个 Qt 界面专项测试；`tests/qt_support.py` 注入无头 `WebShell` 桩（真实 QtWebEngine 在 offscreen 退出时会崩溃），桥/壳/宠物/任务行为仍走生产代码。`test_auto_tasks` 改为 `decode_response` + `run_task_ops`；重新生成的两条路由保证（结果写回分支、重试不重复提问）并入 `test_bridge_modules`。全量 `169` 项通过。
+- web 构建：`npm --prefix web run build` 通过，`web/dist/index.html` 1,050.77 kB（gzip 226.68 kB）。
+- 真实 WebEngine 检查：设置页 9 卡 / 30 按钮 / 17 输入 / 9 开关、控制台零报错；Phase 2 首页/任务页/提醒/表单 全过；Phase 3 流式、停止、重试、重新生成、多义序号、规划快照、草稿 全过，控制台零报错。
+- 打包回归：`.artifacts/buildenv`（PyInstaller 6.16.0）构建 `dist/windows-0.30.1-20261110-133335-429837`，自带 smoke-test 通过；打包 exe 用隔离数据目录启动，主窗 1,098ms 出现并渲染首页（`.artifacts` 外 `build/packaged-check/web-mode.png`）。首次冷启动截图停在“正在连接桥…”，第二次即正常，判断为首次加载 WebEngine 缓存/杀软扫描的冷启动延迟，未复现为桥故障。
+- 未覆盖：Win10、125%/150% DPI、双屏、休眠唤醒、静默启动与真实单实例锁需在目标机器验证；本机为 Win11 单屏 2560×1440@1x。数据升级（v1/v2/v6→v7）与密钥/知识库迁移由 `tests/test_core.py`、`tests/test_windows_settings.py`、`tests/test_bridge_modules.py` 覆盖。
+
+## 提醒卡回到宠物头顶 + 对话页无滚动条 + 侧栏手动收起（2026-11-10）
+
+- 提醒位置：新增 `desktop_pet/ui/reminder_popup.py`（无边框、置顶、`WA_ShowWithoutActivating`、304px 卡宽 + 14px 阴影余量）。`show_at_pet()` 以宠物窗 `frameGeometry` 为锚，卡片底边贴 `BUBBLE_BOTTOM(84)` 上方，横向与宠物中心对齐并夹紧在屏幕可用区内；宠物贴屏幕顶时翻到下方。120ms 跟随定时器让卡片随宠物拖动移动，多张卡按 `slot` 纵向堆叠（间距 6px）。删除 `web/src/components/ReminderStack.tsx` 与 `styles.css` 的 `/* reminders */` 整段，主窗不再渲染提醒卡。
+- 行为不变项：`REMIND_LIMIT=3` 的 deferred、静默时段、重复任务 next_id 链仍留 `check_due_web`；四按钮走壳侧 `resolve_reminder`（完成 / 10 分钟后 / 今天别再说 / 打开待办）。「打开待办 →」调 `show_main()` 并发 `ui.navigate {page:'tasks'}`，React 侧用 `onNavigate` 切页。托盘 notify 改为仅在宠物隐藏时触发，避免与头顶卡片重复。
+- 对话页：`.content-chat` 设 `overflow:hidden`，自身与子元素 `scrollbar-width:none` 且 `::-webkit-scrollbar { width:0; height:0 }`，`.chat-page` 改为 `flex:1; min-height:0` 填满内容区，滚轮滚动不受影响。
+- 侧栏：底部新增 `panel` 图标按钮，切换 `.shell.rail-collapsed`（`--rail-w` 232px↔68px），状态写入 `localStorage['pet.railCollapsed']`，初始值在无存储时按 `innerWidth < 1280` 判断。原 `@media (max-width:1279px)` 自动收缩块已移除，改为纯手动；折叠态隐藏文字、居中图标、宠物卡缩为头像列。
+- 证据：`tools/webshell_phase2_check.py` 23/23（新增卡片存在/位于宠物上方/三按钮/完成/顺延/免打扰/关闭自动顺延/重复任务/「打开待办」跳页、侧栏折叠宽度 68↔232 两段断言），`tools/webshell_phase3_check.py` 25/25（新增对话页无滚动条且填满断言），设置页检查通过，全量 169 项单测通过，`npm run build` 341.66 kB 通过。真实窗口截图（临时脚本，已清理）确认：1320px 宽对话页无可见滚动条、侧栏收起为 68px、提醒卡位于宠物头顶且无重复 Windows toast。
+- 未覆盖：多屏跨屏拖动时的卡片跟随、125%/150% DPI 下的卡片夹紧需在目标机器补测；当前运行中的实例为旧构建，需重启后生效。
+
+## 主窗长时间隐藏后白屏修复（2026-11-10）
+
+- 复现：主窗关闭（隐藏到托盘）→ 结束主进程下的 `QtWebEngineProcess.exe` 渲染进程（模拟 Chromium 长时间隐藏后回收渲染器 / 休眠唤醒丢失）→ 双击宠物打开主窗，`main` 可见但 WebEngine 区域纯白；此前没有任何恢复逻辑，只能重启应用。
+- 修复：`desktop_pet/ui/webshell.py` 记录 `render_lost` 并连接 `renderProcessTerminated`；主窗重新显示时 `ensure_alive()` 先用 `document.readyState + #root 子节点数` 做存活探测（1.5s 无回调或返回异常即判定渲染器失效），失效则 `reload()`。`MainWindow.showEvent` 与 `show_main()` 都会调用，覆盖托盘双击、任务栏、宠物双击与提醒卡「打开待办」各条路径；连续失败时重载间隔按 300ms→5s 退避，加载成功复位；`QApplication.closingDown()` 时不再重载。
+- 验证（真实 WebEngine 窗口，源码实例）：① 隐藏后杀掉两个渲染进程，双击宠物重开——窗口恢复，新渲染进程启动，CDP 读到 `readyState=complete`、`.shell` 与 `aside nav` 存在，正文为首页内容（非「正在连接桌面桥…」），即桥在重载后重新握手；② 窗口可见时杀掉渲染进程——约 300ms 后自动重载恢复，正文时间戳随重载更新；③ 回归：全量 169 项单测、Phase 2 23/23、Phase 3 25/25、设置页检查全部通过，控制台无报错。
+- 说明：重载会丢失未提交的输入框草稿与滚动位置，只在渲染器确实失效时触发；页面正常显示时不重载。GPU 上下文丢失但渲染器仍响应的情况未单独覆盖，若目标机器仍出现白屏可再补强制重绘。
+
+## 后台启动首帧白屏修复（2026-11-11）
+
+- 复现：用户双击宠物打开主窗仍白屏。`desktop_pet/startup.py:38` 的自动启动带 `--background`，`app.py` 因此不调用 `window.show()`；页面在从未显示过的窗口里加载完成，合成器没有绘制首帧。此时 DOM 完全健康（CDP 读到 `readyState=complete`、`#root` 有子节点），上一轮的存活探测必然通过，不会触发重载，于是首次显示只剩白底。
+- 修复：`WebShell` 在 `loadFinished` 时记录 `_loaded_hidden = not self.isVisible()`；`ensure_alive(hidden_seconds=0)` 在 `render_lost`、`_loaded_hidden` 或隐藏时长 ≥ `HIDDEN_RELOAD_SECONDS`(120s) 时直接 `reload()`，否则才做 JS 存活探测。`MainWindow` 新增 `hideEvent` 记录 `time.time()`，`showEvent` 取出隐藏时长并在 `singleShot(0)` 中传给 `_wake_shell`，`show_main()` 走同一入口；时长为一次性消费，避免 `showEvent` 与 `show_main` 重复处理。
+- 验证（真实 WebEngine，源码实例，`DESKTOP_PET_DEV=1` + CDP）：① `python launch.py --background` 启动，主窗隐藏、页面已加载完成（`origin=1794363512253`、`#root=1`、标题“上午好”）；双击宠物头部后主窗可见，`performance.timeOrigin` 变为 `1794363596348`（确认重载），截图渲染完整首页；② 短时隐藏 2.5s 后双击宠物重开，`timeOrigin` 不变（未多余重载），页面保持原状态；③ 隐藏 125s 后重开（见下条验证），强制重载生效；④ 回归：全量 169 项单测、Phase 2 23/23、Phase 3 25/25、设置页检查通过。
+- 说明：重载会回到首页并丢失滚动位置，仅在隐藏加载、隐藏 ≥120s 或渲染器失效时触发；120s 内的快速开合不重载。若目标机器上短时开合仍白屏，可把 `HIDDEN_RELOAD_SECONDS` 调小或改为每次显示都重载。
+
+
+## 当前提交前的验证状态（2026-11-11）
+
+当前代码版本号为 0.31.0。最后一份已构建发行包为 `windows-0.30.1-20261110-133335-429837`，早于 Phase 5 收尾，不代表当前代码的二进制。最近的代码验证日志记录了 169 项 Python 测试、React/Vite 构建、设置/任务/聊天的真实 WebEngine 检查、打包 EXE 自检与隔离数据启动。该数字对应文档所列 2026-11-10 回归，不能直接推断版本号提升或之后文档修订后的代码重新通过了测试。
+
+Windows 10、125%/150% DPI、双屏/跨屏宠物、休眠恢复、干净机器首次启动和目标机上的登录启动/DPAPI 密钥恢复仍未完成验收；macOS 也未验证。提交工作区不代表以上平台或运行场景已验收。

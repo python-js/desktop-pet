@@ -1,9 +1,9 @@
 """Local desktop pet interaction and screen placement."""
 import random
 import time
-from PyQt5.QtCore import QEvent, Qt, QTimer, QSize, QRect
-from PyQt5.QtGui import QColor, QCursor, QFontMetrics, QImage, QPainter, QPixmap
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu
+from PySide6.QtCore import QEvent, Qt, QTimer, QSize, QRect
+from PySide6.QtGui import QColor, QCursor, QFontMetrics, QImage, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication, QWidget, QLabel, QMenu
 from ..animations import load_sequences
 from ..motion import CANVAS_SIZE, SUBJECT_SIZE, SUBJECT_BOTTOM
 
@@ -323,7 +323,7 @@ class Pet(QWidget):
         elif self.enable_3d():
             self.owner.statusBar().showMessage('已切换到 3D 形象：拖动、双击和右键菜单仍然可用。', 6000)
         else:
-            self.owner.statusBar().showMessage('当前环境无法启用 3D 视图，请确认已安装 PyQtWebEngine。', 8000)
+            self.owner.statusBar().showMessage('当前环境无法启用 3D 视图，请确认已安装 PySide6 的 QtWebEngine 组件。', 8000)
 
     def eventFilter(self, watched, event):
         # WebEngine 会吞掉鼠标事件，这里转发拖动、双击和右键菜单。
@@ -505,7 +505,7 @@ class Pet(QWidget):
             menu.addAction('恢复走动' if not self.walking_enabled else '暂停走动', self.toggle_walking)
         menu.addAction('重置宠物位置', self.reset_position)
         menu.addAction('退出', self.owner.quit_app)
-        menu.exec_(pos)
+        menu.exec(pos)
         self.schedule_walk(5000)
 
     def contextMenuEvent(self, event):

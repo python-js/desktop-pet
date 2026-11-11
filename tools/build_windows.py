@@ -15,16 +15,31 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from desktop_pet.version import __version__
 
-RUNTIME_PACKAGES = ('PyQt5', 'PyQt5-Qt5', 'PyQt5-sip', 'PyQtWebEngine', 'PyQtWebEngine-Qt5',
-                    'PyQt-Fluent-Widgets', 'PyQt5-Frameless-Window', 'darkdetect')
+RUNTIME_PACKAGES = ('PySide6', 'PySide6_Essentials', 'PySide6_Addons', 'shiboken6')
 
 
 def build_command(output, work):
     return [sys.executable, '-m', 'PyInstaller', '--name', 'DesktopPet', '--windowed',
-            '--onedir', '--clean', '--collect-all', 'qfluentwidgets',
-            '--add-data', f'{ROOT / "desktop_pet" / "assets"};desktop_pet/assets',
+            '--onedir', '--clean',
+            '--add-data', f'{ROOT / "web" / "dist"};web',
             '--distpath', str(output), '--workpath', str(work / 'cache'),
-            '--specpath', str(work), '--hidden-import', 'PyQt5.sip', str(ROOT / 'launch.py')]
+            '--specpath', str(work),
+            '--hidden-import', 'PySide6.QtWebEngineWidgets',
+            '--hidden-import', 'PySide6.QtWebEngineCore',
+            '--hidden-import', 'PySide6.QtWebChannel', str(ROOT / 'launch.py')]
+
+
+def build_web():
+    npm = shutil.which('npm')
+    if npm is None:
+        raise SystemExit('npm not found; Node.js is required to build the web UI.')
+    if not (ROOT / 'web' / 'node_modules').is_dir():
+        subprocess.run([npm, 'ci'], cwd=ROOT / 'web', check=True)
+    subprocess.run([npm, 'run', 'build'], cwd=ROOT / 'web', check=True)
+    index = ROOT / 'web' / 'dist' / 'index.html'
+    if not index.is_file():
+        raise SystemExit('Web build did not produce web/dist/index.html.')
+    return index
 
 
 def write_licenses(destination):
@@ -65,16 +80,18 @@ def main():
     env = dict(os.environ)
     # A test environment's offscreen mode must not become the normal launch mode.
     env.pop('QT_QPA_PLATFORM', None)
-    env['DESKTOP_PET_UI'] = 'fluent'
+    build_web()
     subprocess.run(build_command(output, work), cwd=ROOT, env=env, check=True)
     application = output / 'DesktopPet'
     exe = application / 'DesktopPet.exe'
     if not exe.is_file():
         raise SystemExit('Build did not produce DesktopPet.exe; no verified release created.')
-    pet3d = application / '_internal' / 'desktop_pet' / 'assets' / 'pet3d'
+    pet3d = application / '_internal' / 'web' / 'pet3d'
     for name in ('index.html', 'three.min.js', 'GLTFLoader.js', 'husky.glb.js'):
         if not (pet3d / name).is_file():
             raise SystemExit(f'3D assets missing from bundle ({name}); do not distribute this build.')
+    if not (application / '_internal' / 'web' / 'index.html').is_file():
+        raise SystemExit('Web UI missing from bundle; do not distribute this build.')
     report = output / 'smoke-test.json'
     subprocess.run([str(exe), '--smoke-test', str(report)], cwd=output, env=env,
                    check=True, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)

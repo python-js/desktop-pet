@@ -1,11 +1,32 @@
 """Preview a local color cutout without changing the active pet until accepted."""
-from PyQt5.QtCore import QRectF, Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
-from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                             QSlider, QColorDialog)
+from PySide6.QtCore import QRectF, Qt, QThread, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+                             QSlider, QColorDialog, QPushButton)
 from ..cutout import corner_color, remove_background, CutoutCancelled
-from .common import button, dialog_heading
 from .theme import mono_font, tokens
+
+
+def _button(text, action, layout, primary=False):
+    layout.setSpacing(8)
+    widget = QPushButton(text)
+    if primary:
+        widget.setProperty('variant', 'primary')
+    widget.clicked.connect(action)
+    layout.addWidget(widget)
+    return widget
+
+
+def _heading(layout, eyebrow, title, subtitle):
+    head = QVBoxLayout()
+    head.setSpacing(4)
+    for text_value, name in ((eyebrow, 'dialogEyebrow'), (title, 'dialogTitle'),
+                             (subtitle, 'dialogSubtitle')):
+        label = QLabel(text_value)
+        label.setObjectName(name)
+        label.setWordWrap(name == 'dialogSubtitle')
+        head.addWidget(label)
+    layout.addLayout(head)
 
 
 class ImagePreview(QWidget):
@@ -38,8 +59,8 @@ class ImagePreview(QWidget):
 
 
 class CutoutWorker(QThread):
-    ready = pyqtSignal(bytes)
-    failed = pyqtSignal(str)
+    ready = Signal(bytes)
+    failed = Signal(str)
 
     def __init__(self, image, pixels, color, tolerance, parent):
         super().__init__(parent)
@@ -64,9 +85,7 @@ class CutoutDialog(QDialog):
         self.resize(700, 510)
         self.image = image.scaled(1024, 1024, Qt.KeepAspectRatio, Qt.SmoothTransformation) if max(image.width(), image.height()) > 1024 else image
         self.image = self.image.convertToFormat(QImage.Format_RGBA8888)
-        bits = self.image.constBits()
-        bits.setsize(self.image.byteCount())
-        self.pixels = bytes(bits)
+        self.pixels = bytes(self.image.constBits())
         self.color = corner_color(self.image.width(), self.image.height(), self.pixels)
         self.result_image = QImage()
         self.worker = None
@@ -74,7 +93,7 @@ class CutoutDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
-        dialog_heading(layout, '图像处理 · CUTOUT', '纯色背景移除',
+        _heading(layout, '图像处理 · CUTOUT', '纯色背景移除',
                        '适合纯色底图，仅移除与图片边缘连通的近似背景色；主体与背景同色时可能误删。'
                        '处理结果最长边为 1024 像素，原图保留。')
         images = QHBoxLayout()
@@ -92,7 +111,7 @@ class CutoutDialog(QDialog):
         layout.addLayout(images, 1)
         controls = QHBoxLayout()
         controls.setSpacing(10)
-        self.color_button = button('选择背景颜色', self.choose_color, controls)
+        self.color_button = _button('选择背景颜色', self.choose_color, controls)
         self.tolerance_label = QLabel('容差：30')
         self.tolerance_label.setObjectName('dialogHintText')
         self.tolerance_label.setFont(mono_font(11))
@@ -110,9 +129,9 @@ class CutoutDialog(QDialog):
         row = QHBoxLayout()
         row.setSpacing(8)
         row.addStretch(1)
-        button('取消', self.reject, row)
-        self.preview_button = button('预览去背景', self.process, row)
-        self.apply_button = button('应用到宠物', self.accept, row, primary=True)
+        _button('取消', self.reject, row)
+        self.preview_button = _button('预览去背景', self.process, row)
+        self.apply_button = _button('应用到宠物', self.accept, row, primary=True)
         self.apply_button.setEnabled(False)
         layout.addLayout(row)
         self.update_color()

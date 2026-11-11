@@ -5,9 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QImage, QColor, QPainter
-from PyQt5.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QImage, QColor, QPainter
+from PySide6.QtCore import Qt
 from desktop_pet.motion import generate_motion, save_motion
 from desktop_pet.animations import load_sequences
 
@@ -60,26 +60,6 @@ class MotionTests(unittest.TestCase):
                     save_motion(frames, root / 'animations' / 'failed')
             self.assertFalse((root / 'animations' / 'failed').exists())
 
-    def test_preview_strength_action_and_cancel_timer(self):
-        from PyQt5.QtTest import QTest
-        from desktop_pet.ui.motion import MotionDialog
-        dialog = MotionDialog(source_image())
-        try:
-            before = dialog.frames['touch'][4].copy()
-            dialog.strength.setValue(100)
-            QTest.qWait(200)
-            self.assertNotEqual(dialog.frames['touch'][4], before)
-            dialog.action.setCurrentIndex(dialog.action.findData('touch'))
-            self.assertEqual(dialog.index, 0)
-            dialog.advance()
-            self.assertEqual(dialog.preview.image, dialog.frames['touch'][1])
-            dialog.reject()
-            self.assertFalse(dialog.timer.isActive())
-            self.assertFalse(dialog.update_timer.isActive())
-        finally:
-            dialog.deleteLater()
-            self.app.processEvents()
-
     def test_apply_image_switches_static_image_and_survives_restart(self):
         from desktop_pet.app import MainWindow
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
@@ -95,10 +75,10 @@ class MotionTests(unittest.TestCase):
                 second = MainWindow()
                 windows.append(second)
                 self.assertFalse(second.pet.pixmap.isNull())
-                second.select_default_image()
+                second.apply_pet_image(None, None)
                 self.assertNotIn('pet_image', second.settings)
                 self.assertTrue(second.pet.pixmap.isNull())
-                second.select_pet_image(second.settings['pet_images'][0])
+                second.apply_pet_image(image_path, None)
                 self.assertEqual(second.settings['pet_image'], image_path)
                 self.assertFalse(second.pet.pixmap.isNull())
             finally:
@@ -113,7 +93,7 @@ class MotionTests(unittest.TestCase):
             window = MainWindow()
             try:
                 before = dict(window.settings)
-                with patch.object(window, 'persist_settings', side_effect=OSError), patch('desktop_pet.ui.settings.QMessageBox.warning'):
+                with patch.object(window, 'persist_settings', side_effect=OSError), patch('desktop_pet.shell.QMessageBox.warning'):
                     self.assertFalse(window.apply_pet_image(image_path, [{'image': image_path}], 'x'))
                 self.assertEqual(window.settings, before)
                 self.assertEqual(window.pet.sequences, {})
@@ -122,7 +102,7 @@ class MotionTests(unittest.TestCase):
                 self.close_windows([window])
 
     def test_remove_active_image_switches_to_default_and_deletes_files(self):
-        from PyQt5.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
         from desktop_pet.app import MainWindow
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
             image_path = str(Path(folder) / 'source.png')
@@ -130,7 +110,7 @@ class MotionTests(unittest.TestCase):
             window = MainWindow()
             try:
                 self.assertTrue(window.apply_pet_image(image_path, [{'image': image_path}], 'ok'))
-                with patch('desktop_pet.ui.settings.QMessageBox.question', return_value=QMessageBox.Yes):
+                with patch('desktop_pet.shell.QMessageBox.question', return_value=QMessageBox.Yes):
                     window.remove_pet_image()
                 self.assertNotIn('pet_image', window.settings)
                 self.assertEqual(window.settings['pet_images'], [])
@@ -143,7 +123,6 @@ class MotionTests(unittest.TestCase):
         for item in windows:
             item.shutting_down = True
             item.timer.stop()
-            item.task_refresh_timer.stop()
             item.pet.close()
             item.tray.hide()
             item.close()

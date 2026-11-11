@@ -1,8 +1,8 @@
 """Bounded local image-sequence import and configuration validation."""
 import re
 from pathlib import Path
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QImageReader, QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImageReader, QPixmap
 
 ACTION_LABELS = {'idle': '待机', 'hover': '移入', 'touch': '点击', 'reminder': '提醒'}
 

@@ -129,66 +129,69 @@ class WindowsAdapterTests(unittest.TestCase):
         self.assertEqual(registry.values, {'OtherApplication': 'keep'})
 
 
-@unittest.skipUnless(importlib.util.find_spec('PyQt5'), 'PyQt5 未安装')
-class SettingsUiTests(unittest.TestCase):
-    def test_secure_restore_disable_and_startup_are_explicit(self):
-        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-        from PyQt5.QtWidgets import QApplication
+@unittest.skipUnless(importlib.util.find_spec('PySide6'), 'PySide6 未安装')
+class ShellConfigTests(unittest.TestCase):
+    def test_secret_restore_and_settings_never_store_plaintext(self):
         from desktop_pet.app import MainWindow
-
-        app = QApplication.instance() or QApplication([])
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
             secret = SecretStore(folder, synthetic_protector, supported=True)
+            secret.save('https://a.example/v1', 'synthetic-key')
+            secret.save_tavily('tvly-synthetic')
+            (Path(folder) / 'settings.json').write_text(json.dumps({
+                'base_url': 'https://a.example/v1', 'model': 'test',
+                'remember_key': True, 'theme': 'dark',
+                'pet_animations': {'idle': {}},
+            }), encoding='utf-8')
             startup = StartupManager(folder, Path(folder) / 'missing.exe', FakeRegistry(), supported=True)
-            windows = []
+            window = MainWindow(secret_store=secret, startup_manager=startup)
             try:
-                window = MainWindow(secret_store=secret, startup_manager=startup)
-                windows.append(window)
                 window.timer.stop()
-                window.base_url.setText('https://a.example/v1')
-                window.model.setText('test')
-                window.key.setText('synthetic-key')
-                window.remember_key.setChecked(True)
-                window.save_settings()
-                self.assertNotIn('synthetic-key', (Path(folder) / 'settings.json').read_text(encoding='utf-8'))
-                self.assertEqual(startup.registry.values, {'OtherApplication': 'keep'})
-                restored = MainWindow(secret_store=secret, startup_manager=startup)
-                windows.append(restored)
-                restored.timer.stop()
-                self.assertEqual(restored.key.text(), 'synthetic-key')
-                self.assertTrue(restored.remember_key.isChecked())
-                restored.base_url.setText('https://b.example/v1')
-                with patch('desktop_pet.ui.settings.QMessageBox.warning') as warning:
-                    restored.save_settings()
-                    warning.assert_called_once()
-                self.assertEqual(restored.settings['base_url'], 'https://a.example/v1')
-                restored.endpoint_edited()
-                self.assertEqual(restored.key.text(), '')
-                restored.key.setText('new-synthetic-key')
-                restored.remember_key.setChecked(False)
-                restored.save_settings()
-                self.assertFalse(secret.path.exists())
-                self.assertEqual(restored.settings['api_key'], 'new-synthetic-key')
+                self.assertEqual(window.settings['api_key'], 'synthetic-key')
+                self.assertEqual(window.settings['tavily_key'], 'tvly-synthetic')
+                self.assertEqual(window.secret_endpoint, 'https://a.example/v1')
+                self.assertEqual(window.theme, 'dark')
+                self.assertNotIn('pet_animations', window.settings)
+                window.set_theme('light')
                 config = json.loads((Path(folder) / 'settings.json').read_text(encoding='utf-8'))
+                self.assertEqual(config['theme'], 'light')
                 self.assertNotIn('api_key', config)
-                self.assertFalse(config['remember_key'])
-                with patch.object(startup, 'set_enabled') as setter:
-                    restored.login_startup.setChecked(True)
-                    setter.assert_not_called()
-                    restored.save_startup()
-                    setter.assert_called_once_with(True)
+                self.assertNotIn('ui_shell', config)
+                self.assertNotIn('sidebar_collapsed', config)
+                self.assertNotIn('synthetic-key', json.dumps(config))
+                self.assertNotIn('tvly-synthetic', json.dumps(config))
             finally:
-                for window in windows:
-                    window.timer.stop()
-                    window.stream_timer.stop()
-                    window.task_refresh_timer.stop()
-                    window.shutting_down = True
-                    window.pet.close()
-                    window.tray.hide()
-                    window.close()
-                    window.store.close()
-                    window.deleteLater()
-                app.processEvents()
+                window.timer.stop()
+                window.shutting_down = True
+                window.pet.close()
+                window.tray.hide()
+                window.close()
+                window.store.close()
+                window.deleteLater()
+                QT_APP.processEvents()
+
+    def test_missing_secret_warns_without_plaintext_fallback(self):
+        from desktop_pet.app import MainWindow
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
+            (Path(folder) / 'settings.json').write_text(json.dumps({
+                'base_url': 'https://a.example/v1', 'model': 'test', 'remember_key': True,
+            }), encoding='utf-8')
+            secret = SecretStore(folder, synthetic_protector, supported=True)
+            window = MainWindow(secret_store=secret, startup_manager=StartupManager(
+                folder, Path(folder) / 'missing.exe', FakeRegistry(), supported=True))
+            try:
+                window.timer.stop()
+                self.assertNotIn('api_key', window.settings)
+                self.assertIn('安全密钥', window.settings_warning)
+                self.assertFalse(secret.path.exists())
+            finally:
+                window.timer.stop()
+                window.shutting_down = True
+                window.pet.close()
+                window.tray.hide()
+                window.close()
+                window.store.close()
+                window.deleteLater()
+                QT_APP.processEvents()
 
 
 if __name__ == '__main__':

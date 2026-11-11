@@ -82,6 +82,70 @@ def validate_task(title, due, now=None):
     return title.strip(), value.isoformat()
 
 
+DUE_TEXT_RULES = (
+    re.compile(r'(\d{1,3})\s*(分钟|小时|天)\s*(?:后|以后)'),
+    re.compile(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s+([01]?\d|2[0-3])[:：]([0-5]\d))?'),
+    re.compile(r'(今天|明天|后天)?\s*([01]?\d|2[0-3])[:：]([0-5]\d)'),
+)
+WEEKDAY_DIGITS = {'一': 0, '二': 1, '三': 2, '四': 3, '五': 4, '六': 5, '日': 6, '天': 6}
+
+
+def parse_due_text(text, now=None):
+    """Parse the short Chinese due phrases used by the task form; returns {dueAt, repeat}.
+
+    This is deliberately a small surface: full date-times, 今天/明天/后天 HH:MM, bare
+    HH:MM, N 分钟后/小时后/天后, and 每天/工作日/每周(一) repeat hints.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError('请输入提醒时间')
+    raw = text.strip()
+    now = (now or datetime.now().astimezone())
+    repeat = 'none'
+    weekday = None
+    if '每天' in raw:
+        repeat = 'daily'
+    elif any(word in raw for word in ('工作日', '周一至五', '每周一至五')):
+        repeat = 'weekdays'
+    else:
+        weekly = re.search(r'每周([一二三四五六日天])?', raw)
+        if weekly:
+            repeat = 'weekly'
+            if weekly.group(1):
+                weekday = WEEKDAY_DIGITS[weekly.group(1)]
+
+    offset = DUE_TEXT_RULES[0].search(raw)
+    date_part = DUE_TEXT_RULES[1].search(raw)
+    clock_part = DUE_TEXT_RULES[2].search(raw)
+    if offset:
+        amount = int(offset.group(1))
+        unit = {'分钟': 'minutes', '小时': 'hours', '天': 'days'}[offset.group(2)]
+        value = now + timedelta(**{unit: amount})
+    elif date_part:
+        year, month, day = (int(part) for part in date_part.group(1, 2, 3))
+        hour = int(date_part.group(4) or 9)
+        minute = int(date_part.group(5) or 0)
+        value = now.replace(year=year, month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0)
+    elif clock_part:
+        day_name = clock_part.group(1)
+        hour, minute = int(clock_part.group(2)), int(clock_part.group(3))
+        base = now + timedelta(days={'今天': 0, '明天': 1, '后天': 2}.get(day_name, 0))
+        value = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if day_name is None and value <= now:
+            value += timedelta(days=1)
+    else:
+        try:
+            value = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        except ValueError:
+            raise ValueError('没听懂这个时间，试试“明天 9:30”或“2 小时后”') from None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=now.tzinfo)
+    if weekday is not None:
+        value += timedelta(days=(weekday - value.weekday()) % 7)
+        if value <= now:
+            value += timedelta(days=7)
+    return {'dueAt': value.isoformat(timespec='minutes'), 'repeat': repeat}
+
+
 def validate_endpoint(value):
     parts = urlsplit(value.strip())
     if (not parts.hostname or parts.username or parts.password or parts.query or parts.fragment

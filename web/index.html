@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Desktop Pet</title>
+    <script>
+      window.__errors = []
+      window.onerror = function (message, source, line, col, error) {
+        window.__errors.push(String(message) + ' @' + line + ':' + col)
+        return false
+      }
+      window.addEventListener('unhandledrejection', function (event) {
+        window.__errors.push('rejection: ' + String(event.reason))
+      })
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

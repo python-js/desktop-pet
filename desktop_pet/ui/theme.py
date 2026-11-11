@@ -3,16 +3,14 @@
 颜色、字号与尺寸来自 tokens.py；QSS 由 token 生成，纸白/夜幕切换时重建。
 """
 import os
-import re
 from pathlib import Path
 from string import Template
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPalette, QPixmap
-from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtWidgets import QGraphicsDropShadowEffect
 
 from . import tokens as T
-from .controls import FLUENT_MODE
 
 INK = T.LIGHT.ink
 MUTED = T.LIGHT.ink_3
@@ -185,20 +183,6 @@ def build_style(t):
     return _STYLE.substitute(vars(t))
 
 
-def _fluent_safe_stylesheet(qss, t):
-    rules = re.findall(r'([^{}]+)\{([^{}]*)\}', qss)
-    blocked = ('QComboBox', 'QSpinBox', 'QCheckBox', 'QPushButton')
-    shell = ''.join(selector + '{' + body + '}' for selector, body in rules
-                    if not any(name in selector for name in blocked))
-    shell += (f'QDateTimeEdit {{background:{t.surface};border:1px solid {t.border};'
-              f'border-radius:10px;padding:8px;min-height:22px;color:{t.ink};}}'
-              f'QDateTimeEdit:focus {{border-color:{t.brand};}}'
-              'QDateTimeEdit::drop-down {width:26px;border:0;}'
-              f'QCalendarWidget QWidget {{background:{t.surface};color:{t.ink};}}'
-              'QDialog QDialogButtonBox QPushButton {min-height:32px;padding:4px 16px;border-radius:10px;}')
-    return shell
-
-
 _style_ready = False
 
 
@@ -232,12 +216,7 @@ def apply_theme(app, theme='light'):
     palette.setColor(QPalette.ToolTipBase, QColor(_active.ink))
     palette.setColor(QPalette.ToolTipText, QColor(_active.bg))
     app.setPalette(palette)
-    if FLUENT_MODE:
-        from .fluent import configure_fluent
-        configure_fluent(_active.name)
-        app.setStyleSheet(_fluent_safe_stylesheet(build_style(_active), _active))
-    else:
-        app.setStyleSheet(build_style(_active))
+    app.setStyleSheet(build_style(_active))
 
 
 def application_icon():

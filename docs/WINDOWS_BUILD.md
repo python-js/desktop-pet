@@ -1,40 +1,35 @@
 # Windows 构建与运行
 
-版本：0.30.1；日期：2026-10-30。
-
-当前交付为构建脚本与打包兼容代码；本机已按此脚本产出构建，但受限环境尚未在未安装 Python/Qt 的干净机器上验收。
+当前代码版本：`0.31.0`（2026-11-11）。最近一份已构建发行包为 `windows-0.30.1-20261110-133335-429837`，它早于本次迁移收尾变更；当前提交尚未生成对应发行包，勿将旧包描述为当前版本产物。
 
 ## 构建
 
-在 Windows 64位 Python 虚拟环境中，从 desktop-pet 目录执行：
+在 64 位 Windows 的项目虚拟环境中，从 `desktop-pet` 目录执行。需要 Python 3.10+、Node.js 18+ 与 npm：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 .\build-windows.ps1
 ```
 
-构建器固定使用 PyInstaller 6.16.0，使用当前虚拟环境中的运行依赖。每次写入新的带版本与时间戳目录，不覆盖旧发行目录。缺少依赖时直接报错，不自动安装或修改注册表。
+脚本在 `web/` 下运行 `npm ci`（`node_modules` 不存在时）和 `npm run build`，然后用 PyInstaller 生成 onedir 文件夹发行版。PyInstaller 固定为 6.16.0。每次写入新版本/时间戳目录，不覆盖旧发行目录。构建需要安装清单中的 Qt 运行组件；缺少依赖或前端构建失败时会停止。
 
-成功后 `dist/windows-0.30.1-时间戳/` 包含：
+输出位于 `dist/windows-<版本>-<时间戳>/`：
 
-- `DesktopPet/DesktopPet.exe` 和 `_internal` 依赖目录；整个 DesktopPet 文件夹必须一起保留。`_internal/desktop_pet/assets/pet3d/` 内含 three.js、GLTFLoader、哈士奇与狐狸模型（含许可证），3D 模式离线可用。
-- `DesktopPet/licenses/` 项目许可证、运行依赖许可证原文和依赖版本清单。
-- ZIP压缩包、文件SHA256清单 `manifest.json` 与打包程序自检结果 `smoke-test.json`。
+- `DesktopPet/DesktopPet.exe` 及 `_internal/` 依赖；分发和解压时须保留整个 `DesktopPet` 文件夹。
+- `_internal/web/index.html` 主界面和 `_internal/web/pet3d/` 离线 three.js/3D 模型资源。
+- `DesktopPet/licenses/` 项目和运行依赖许可文件，以及依赖版本清单。
+- ZIP、`manifest.json` SHA256 清单和 `smoke-test.json` 自检结果。
 
-自检会运行新EXE的专用入口，检查Qt离屏插件、内存SQLite、基础动作生成与 3D 场景资产；构建器另外核对包内 `assets/pet3d` 文件齐全。不访问真实配置、密钥或用户数据库。自检失败不会生成最终ZIP；仍可能留下中间构建目录。
+构建器运行打包 EXE 的无头自检，检查 Qt 插件、SQLite、宠物图片、3D 资源和 Web 前端，并核对冻结目录资源。自检使用隔离数据目录，不读取用户配置、密钥或数据库。构建后会生成 ZIP；自检通过不代表已覆盖所有真实桌面、显示器和 Windows 版本。
 
-## 运行与数据
+## 分发与运行
 
-解压完整文件夹后双击DesktopPet.exe。应用数据仍保存到 `%LOCALAPPDATA%\DesktopPet`，源码版与打包版共享当前用户数据，因此两者不要同时运行。QLockFile继续防止重复实例。
+把 `DesktopPet-<版本>-windows.zip` 发给 Windows x64 用户。对方应完整解压后运行 `DesktopPet/DesktopPet.exe`，不能只复制 EXE。首次运行需配置自己的模型服务和密钥。程序把数据库与设置存放在 `%LOCALAPPDATA%\DesktopPet`；构建不会打包本机应用数据或用户资源。
 
-不要将设置、数据库、API Key或上传的宠物素材放入发行包。构建仅从launch.py依赖图收集代码，不复制应用数据目录、旧opendoro项目或整个工作区。
+源码版和打包版共享当前 Windows 用户的数据目录，不要同时运行。关闭主窗口会留在托盘；从托盘选择“退出”后提醒停止，重启应用会补检仍未处理的逾期待办。打包后的登录启动直接调用 EXE；移动应用目录后需重新应用启动设置。
 
-打包版的登录启动直接调用EXE的 `--background` 参数。切换到打包版或移动文件夹后，需在设置中重新应用启动配置。不会自动改写已有启动项。首次迁移前建议保留数据目录备份。
+当前交付是免安装 onedir ZIP，未配置数字签名、安装器或应用内自动更新。Windows 可能对未签名程序显示未知发布者提示。
 
-## 发行状态
+## 验收边界
 
-该方案生成免安装文件夹版，暂不包含安装器、数字签名或自动更新。代码实现不等于已通过真实打包验收。
-
-PyQt5使用GPLv3或商业许可；项目根目录为Apache-2.0许可证。构建器收集依赖许可文件，不代替对发行方式与许可要求的确认。Qt插件和实际产物清单以构建结果为准。
-
-尚需在真实打包程序中验证：正常显示、中文文字、托盘、透明窗口、提醒、密钥加密、登录启动，以及没有Python环境的Windows机器运行。
+验证日志截至 2026-11-11 记录了 Win11 单屏 2560×1440@100% 下的 WebEngine 界面/桥接检查、打包自检及有限常驻运行观察。Win10、125%/150% DPI、双屏与跨屏拖动、休眠唤醒、干净机器首次启动、DPAPI 登录启动的目标机验收尚未完成；签名前还应按实际发行渠道复核 Qt/PySide6 许可及发行义务。详细证据见 [验证记录](VALIDATION.md) 与 [Web 迁移计划](WEB_MIGRATION_PLAN.md)。

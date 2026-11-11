@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QImage
-from PyQt5.QtCore import Qt, QPoint, QRect
-from PyQt5.QtTest import QTest
+from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QImage
+from PySide6.QtCore import Qt, QPoint, QRect
+from PySide6.QtTest import QTest
 from desktop_pet.app import MainWindow
 from desktop_pet.ui.pet import BUBBLE_BOTTOM, BUBBLE_WIDTH
 
@@ -49,7 +49,6 @@ class PetTests(unittest.TestCase):
                 for item in windows:
                     item.shutting_down = True
                     item.timer.stop()
-                    item.task_refresh_timer.stop()
                     item.pet.close()
                     item.tray.hide()
                     item.close()
@@ -83,7 +82,6 @@ class PetTests(unittest.TestCase):
             finally:
                 window.shutting_down = True
                 window.timer.stop()
-                window.task_refresh_timer.stop()
                 window.pet.close()
                 window.tray.hide()
                 window.close()
@@ -120,7 +118,39 @@ class PetTests(unittest.TestCase):
             finally:
                 window.shutting_down = True
                 window.timer.stop()
-                window.task_refresh_timer.stop()
+                window.pet.close()
+                window.tray.hide()
+                window.close()
+                window.store.close()
+                window.deleteLater()
+                app.processEvents()
+
+
+class HiddenReloadWiringTests(unittest.TestCase):
+    def test_show_after_hide_passes_elapsed_to_shell(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
+            window = MainWindow()
+            calls = []
+            window.web_shell.ensure_alive = lambda hidden_seconds=0.0: calls.append(hidden_seconds)
+            try:
+                window.show()
+                app.processEvents()
+                self.assertEqual(calls, [0.0])
+                window.hide()
+                app.processEvents()
+                window._hidden_at -= 300
+                window.show()
+                app.processEvents()
+                self.assertGreaterEqual(calls[-1], 300)
+                self.assertIsNone(window._hidden_at)
+                window.hide()
+                window.show()
+                app.processEvents()
+                self.assertEqual(calls[-1], 0.0)
+            finally:
+                window.shutting_down = True
+                window.timer.stop()
                 window.pet.close()
                 window.tray.hide()
                 window.close()

@@ -1,6 +1,8 @@
 # 实施计划与验收
 
-日期：2026-10-26。本文按可验收的增量组织；勾选表示已完成代码交付，不代表已在全部真实系统验证。
+> 本文是历史实施记录。Phase 5 已删除全部主窗口 Qt 页面与 Fluent 依赖，界面改为 `web/`；涉及旧页面、QSS、Fluent 的条目仅用于追溯。桌宠宿主与提醒气泡仍使用 Qt，Web 迁移的现状及未完成验收见 [WEB_MIGRATION_PLAN.md](WEB_MIGRATION_PLAN.md)。
+
+原始日期：2026-10-26；当前源码构建与平台验收边界见 [WINDOWS_BUILD.md](WINDOWS_BUILD.md)。本文按可验收的增量组织；勾选表示已完成代码交付，不代表已在全部真实系统验证。
 
 ## M0：独立工程与设计
 
@@ -79,7 +81,7 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m desktop_pet
 ```
 
-无 PyQt5 的环境仍可运行纯标准库核心测试。Qt 无屏幕冒烟测试需显式设置 `QT_QPA_PLATFORM=offscreen`，不能代替真实通知/透明窗口验收。单独记录实际测试结果于 `docs/VALIDATION.md`。
+无 PySide6 的环境仍可运行纯标准库核心测试。Qt 无屏幕冒烟测试需显式设置 `QT_QPA_PLATFORM=offscreen`，不能代替真实通知/透明窗口验收。单独记录实际测试结果于 `docs/VALIDATION.md`。
 
 ## 风险与决策
 
