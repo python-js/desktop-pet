@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   api, AssistantResult, AssistantState, ChatMessage, ChatPlanPreview, ChatSession,
   ChatSessionPayload, ChatSnapshot, Draft, KnowledgeHit, PlanResult, SearchSource, Task,
   onAssistantChunk, onAssistantFailed, onAssistantResult, onAssistantState,
   onChatChanged, onPlanResult, onTasksChanged,
 } from '../api'
+import { fetchCached, invalidateCache, isFresh, readCache, writeCache } from '../queryCache'
 import { Button, Icon, Paw, Pill } from '../ui'
 import { formatClock, formatDue, isToday, REPEAT_LABELS } from '../tasks'
 import Markdown from '../components/Markdown'
+import LatticeLoader from '../components/LatticeLoader'
+import GlideSelect from '../components/GlideSelect'
+import SpecularButton from '../components/SpecularButton'
 
 type UiMessage = ChatMessage & {
   sources?: SearchSource[]
@@ -15,6 +20,17 @@ type UiMessage = ChatMessage & {
   meta?: string
   tasks?: string[]
   choice?: string | null
+}
+
+function formatMessageTime(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const clock = formatClock(value)
+  return date.toDateString() === now.toDateString()
+    ? `今天 ${clock}`
+    : `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
 }
 
 type Stream = { jobId: string | null; text: string }
@@ -59,14 +75,19 @@ function formatSnapshotTime(iso: string): string {
 export default function ChatPage(props: {
   onOpenTasks: () => void
   onOpenSettings: () => void
+  active?: boolean
 }) {
-  const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [sideTasks, setSideTasks] = useState<Task[]>([])
-  const [active, setActive] = useState('')
-  const [payload, setPayload] = useState<ChatSessionPayload | null>(null)
-  const [messages, setMessages] = useState<UiMessage[]>([])
-  const [drafts, setDrafts] = useState<Draft[]>([])
-  const [input, setInput] = useState('')
+  const initialSessionId = readCache<string>('chat.activeSession') ?? ''
+  const initialPayload = initialSessionId
+    ? readCache<ChatSessionPayload>(`chat.session.${initialSessionId}`) ?? null
+    : null
+  const [sessions, setSessions] = useState<ChatSession[]>(() => readCache<ChatSession[]>('chat.sessions') ?? [])
+  const [sideTasks, setSideTasks] = useState<Task[]>(() => readCache<Task[]>('tasks.pending') ?? [])
+  const [active, setActive] = useState(initialSessionId)
+  const [payload, setPayload] = useState<ChatSessionPayload | null>(initialPayload)
+  const [messages, setMessages] = useState<UiMessage[]>(() => initialPayload?.messages.map((message) => ({ ...message })) ?? [])
+  const [drafts, setDrafts] = useState<Draft[]>(() => initialPayload?.drafts ?? [])
+  const [input, setInput] = useState(() => initialPayload?.session.inputText ?? '')
   const [state, setState] = useState<AssistantState>({ state: 'idle' })
   const [streams, setStreams] = useState<Record<string, Stream>>({})
   const [liveSources, setLiveSources] = useState<SearchSource[]>([])
@@ -77,14 +98,22 @@ export default function ChatPage(props: {
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null)
   const [planPreview, setPlanPreview] = useState<ChatPlanPreview | null>(null)
   const [planCard, setPlanCard] = useState<PlanResult | null>(null)
+  const [createPending, setCreatePending] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [initialLoading, setInitialLoading] = useState(!initialPayload)
+  const [refreshing, setRefreshing] = useState(false)
 
   const activeRef = useRef('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const streamContentRef = useRef<HTMLDivElement>(null)
+  const bottomAnchorRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const stickRef = useRef(true)
+  const loadRequestRef = useRef(0)
 
-  const loadSession = useCallback(async (sessionId?: string) => {
-    const data = await api.chatSession(sessionId)
+  const applySession = useCallback((data: ChatSessionPayload) => {
     activeRef.current = data.session.id
+    writeCache('chat.activeSession', data.session.id)
     setActive(data.session.id)
     setPayload(data)
     setMessages(data.messages.map((message) => ({ ...message })))
@@ -101,9 +130,35 @@ export default function ChatPage(props: {
     }
   }, [])
 
+  const loadSession = useCallback(async (sessionId?: string) => {
+    const requestId = ++loadRequestRef.current
+    const cached = sessionId ? readCache<ChatSessionPayload>(`chat.session.${sessionId}`) : undefined
+    if (cached) applySession(cached)
+    setInitialLoading(!cached)
+    setRefreshing(!!cached)
+    try {
+      if (cached && isFresh(`chat.session.${sessionId}`, 15_000)) {
+        // Reuse fresh messages immediately while still activating the session in the shell.
+        const activated = await api.chatSession(sessionId)
+        writeCache(`chat.session.${activated.session.id}`, activated)
+        if (requestId === loadRequestRef.current) applySession(activated)
+      } else {
+        const data = await api.chatSession(sessionId)
+        writeCache(`chat.session.${data.session.id}`, data)
+        if (requestId === loadRequestRef.current) applySession(data)
+      }
+    } finally {
+      if (requestId === loadRequestRef.current) {
+        setInitialLoading(false)
+        setRefreshing(false)
+      }
+    }
+  }, [applySession])
+
   const refreshSessions = useCallback(async () => {
     try {
       const data = await api.chatSessions()
+      writeCache('chat.sessions', data.sessions)
       setSessions(data.sessions)
     } catch {
       // Session list refresh is best-effort; the next event retries.
@@ -111,29 +166,57 @@ export default function ChatPage(props: {
   }, [])
 
   useEffect(() => {
+    if (!props.active) return
+    const cachedSessions = readCache<ChatSession[]>('chat.sessions')
+    const cachedActive = readCache<string>('chat.activeSession')
+    const cachedSession = cachedActive
+      ? readCache<ChatSessionPayload>(`chat.session.${cachedActive}`)
+      : undefined
+    if (cachedSessions && cachedSession && isFresh('chat.sessions', 15_000)
+      && isFresh(`chat.session.${cachedActive}`, 15_000)) {
+      setSessions(cachedSessions)
+      applySession(cachedSession)
+      setInitialLoading(false)
+      setRefreshing(false)
+      return
+    }
+    if (cachedSessions) setSessions(cachedSessions)
+    if (cachedSession) {
+      applySession(cachedSession)
+      setInitialLoading(false)
+    }
     let cancelled = false
     void (async () => {
       try {
+        if (!cachedSession) setInitialLoading(true)
         const data = await api.chatSessions()
         if (cancelled) return
+        invalidateCache('chat.sessions')
+        data.sessions.forEach((session) => invalidateCache(`chat.session.${session.id}`))
+        writeCache('chat.sessions', data.sessions)
         setSessions(data.sessions)
         await loadSession(data.activeSession)
       } catch (err) {
-        if (!cancelled) setNotice(err instanceof Error ? err.message : '读取对话失败')
+        if (!cancelled) {
+          setInitialLoading(false)
+          setNotice(err instanceof Error ? err.message : '读取对话失败')
+        }
       }
     })()
     return () => { cancelled = true }
-  }, [loadSession])
+  }, [applySession, loadSession, props.active])
 
   useEffect(() => {
+    if (!props.active) return
     const load = () => {
-      void api.tasksList()
+      invalidateCache('tasks.pending')
+      void fetchCached('tasks.pending', api.tasksList)
         .then((rows) => setSideTasks(rows))
         .catch(() => {})
     }
     load()
     return onTasksChanged(load)
-  }, [])
+  }, [props.active])
 
   useEffect(() => onAssistantState((update) => {
     setState(update)
@@ -169,6 +252,7 @@ export default function ChatPage(props: {
     const message: UiMessage = {
       role: 'assistant',
       content: result.reply,
+      created_at: new Date().toISOString(),
       sources: result.sources,
       knowledge: result.knowledge,
       meta: result.meta,
@@ -177,8 +261,9 @@ export default function ChatPage(props: {
     }
     setMessages((prev) => {
       const next = [...prev, message]
-      if (result.note) next.push({ role: 'system', content: result.note })
-      result.notices.forEach((text) => next.push({ role: 'system', content: text }))
+      const createdAt = new Date().toISOString()
+      if (result.note) next.push({ role: 'system', content: result.note, created_at: createdAt })
+      result.notices.forEach((text) => next.push({ role: 'system', content: text, created_at: createdAt }))
       return next
     })
   }, [])
@@ -209,7 +294,17 @@ export default function ChatPage(props: {
   }), [])
 
   useEffect(() => onPlanResult((result) => setPlanCard(result)), [])
-  useEffect(() => onChatChanged(() => void refreshSessions()), [refreshSessions])
+  useEffect(() => onChatChanged((event) => {
+    invalidateCache('chat.sessions')
+    if (event.sessionId) invalidateCache(`chat.session.${event.sessionId}`)
+    if (props.active) {
+      void refreshSessions()
+      if (event.sessionId === activeRef.current) void loadSession(event.sessionId).catch(() => {
+        setRefreshing(false)
+        setNotice('同步失败，仍显示上次内容。')
+      })
+    }
+  }), [props.active, refreshSessions, loadSession])
 
   // Persist the unsent composer text so a page reload or session switch keeps it.
   useEffect(() => {
@@ -220,15 +315,59 @@ export default function ChatPage(props: {
     return () => window.clearTimeout(timer)
   }, [input, active])
 
+  useEffect(() => {
+    if (!active || !payload) return
+    const cached = readCache<ChatSessionPayload>(`chat.session.${active}`)
+    if (cached) {
+      writeCache(`chat.session.${active}`, {
+        ...cached,
+        session: { ...cached.session, inputText: input },
+      })
+    }
+  }, [input, active, payload])
+
   const stream = streams[active]
   const streamText = stream?.text ?? ''
-  useEffect(() => {
-    const el = scrollRef.current
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight
-  }, [messages, streamText, planCard, drafts, active])
-
   const busy = BUSY_STATES.has(state.state)
   const otherBusy = busy && !!state.sessionId && state.sessionId !== active
+  const waitingForReply = busy && state.sessionId === active && !streamText
+  const scrollToBottom = useCallback(() => {
+    const anchor = bottomAnchorRef.current
+    if (anchor) {
+      anchor.scrollIntoView({ block: 'end', behavior: 'auto' })
+      return
+    }
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!stickRef.current && !waitingForReply) return
+    scrollToBottom()
+    const frame = window.requestAnimationFrame(() => {
+      if (stickRef.current || waitingForReply) scrollToBottom()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [messages, streamText, planCard, drafts, active, busy, state.sessionId, waitingForReply, scrollToBottom])
+
+  useEffect(() => {
+    const content = streamContentRef.current
+    if (!content || typeof ResizeObserver === 'undefined') return
+    let frame = 0
+    const observer = new ResizeObserver(() => {
+      if (!stickRef.current && !waitingForReply) return
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        if (stickRef.current || waitingForReply) scrollToBottom()
+      })
+    })
+    observer.observe(content)
+    return () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
+    }
+  }, [active, waitingForReply, scrollToBottom])
+
   const title = sessions.find((row) => row.id === active)?.title
     ?? payload?.session.title ?? '对话'
   const canRegenerate = !!payload?.hasModel
@@ -240,6 +379,7 @@ export default function ChatPage(props: {
   const modelLabel = payload?.hasModel ? '模型聊天' : '本地规则'
 
   const onScroll = () => {
+    if (waitingForReply) return
     const el = scrollRef.current
     if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
   }
@@ -260,7 +400,7 @@ export default function ChatPage(props: {
     setNotice('')
     setFailure(null)
     stickRef.current = true
-    setMessages((prev) => [...prev, { role: 'user', content: text }])
+    setMessages((prev) => [...prev, { role: 'user', content: text, created_at: new Date().toISOString() }])
     setInput('')
     try {
       await api.chatSend(activeRef.current, text)
@@ -286,9 +426,26 @@ export default function ChatPage(props: {
   })
 
   const createSession = () => void act('新建对话', async () => {
-    const data = await api.chatCreateSession()
+    if (createPending || sessions[0]?.messageCount === 0) return
+    setCreatePending(true)
+    try {
+      const data = await api.chatCreateSession()
+      await refreshSessions()
+      await loadSession(data.sessionId)
+    } finally {
+      setCreatePending(false)
+    }
+  })
+
+  const deleteSession = (sessionId: string) => setDeleteConfirm(sessionId)
+
+  const confirmDeleteSession = () => void act('删除对话', async () => {
+    if (!deleteConfirm) return
+    const sessionId = deleteConfirm
+    setDeleteConfirm(null)
+    const result = await api.chatDeleteSession(sessionId)
     await refreshSessions()
-    await loadSession(data.sessionId)
+    if (sessionId === activeRef.current) await loadSession(result.activeSession)
   })
 
   const commitRename = async () => {
@@ -330,7 +487,7 @@ export default function ChatPage(props: {
   const startPlan = async () => {
     setPlanPreview(null)
     stickRef.current = true
-    setMessages((prev) => [...prev, { role: 'user', content: '帮我规划今天' }])
+    setMessages((prev) => [...prev, { role: 'user', content: '帮我规划今天', created_at: new Date().toISOString() }])
     try {
       await api.chatPlanStart(activeRef.current)
     } catch (err) {
@@ -347,81 +504,137 @@ export default function ChatPage(props: {
 
   return (
     <div className="chat-page">
+      {refreshing && !initialLoading && <div className="page-refresh-indicator chat-refresh-indicator"><i />正在同步</div>}
+      {initialLoading && <div className="page-skeleton chat-skeleton" aria-label="正在加载对话"><span /><span /><span /></div>}
       <div className="chat">
         <section className="chat-main">
           <header className="chat-head">
-            <span className="chat-head-label">当前对话</span>
-            {editing ? (
-              <input
-                className="field chat-session-select"
-                autoFocus
-                value={editing.title}
-                maxLength={60}
-                onChange={(e) => setEditing({ ...editing, title: e.target.value })}
-                onBlur={() => void commitRename()}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void commitRename()
-                  if (e.key === 'Escape') setEditing(null)
-                }}
-              />
-            ) : (
-              <select
-                className="field chat-session-select"
-                value={active}
-                aria-label="切换对话"
-                onChange={(e) => {
-                  const next = e.target.value
-                  if (next !== active) void act('切换对话', () => loadSession(next))
-                }}
-              >
-                {!sessions.some((row) => row.id === active) && <option value={active}>{title}</option>}
-                {sessions.map((session) => (
-                  <option key={session.id} value={session.id}>{session.title}</option>
-                ))}
-              </select>
-            )}
-            <button
-              type="button"
-              className="icon-btn"
-              title="重命名当前对话"
-              aria-label="重命名当前对话"
-              onClick={() => setEditing({ id: active, title })}
-            >
-              <Icon name="edit" size={14} />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title="复制对话内容"
-              aria-label="复制对话内容"
-              onClick={() => void act('复制对话', async () => {
-                const text = messages
-                  .map((message) => message.role === 'user'
-                    ? `我：${message.content}`
-                    : message.role === 'assistant' ? `小满：${message.content}` : message.content)
-                  .join('\n\n')
-                await copyText(text || '（空对话）')
-              })}
-            >
-              <Icon name="copy" size={14} />
-            </button>
-            <span className="spacer" />
-            <Button small onClick={previewPlan} disabled={busy}>
-              <Icon name="sparkles" size={14} />今日规划
-            </Button>
-            <Button small primary onClick={createSession}>
-              <Icon name="plus" size={14} />新对话
-            </Button>
+            <div className="chat-heading">
+              <span className="chat-heading-mark"><Paw size={17} /></span>
+              <div className="chat-heading-copy">
+                <span className="chat-head-label">YOUR THOUGHT PARTNER</span>
+                <strong>对话助手</strong>
+                <span className="chat-heading-subtitle">把想法理清楚，再一步步变成行动</span>
+              </div>
+            </div>
+            <div className="chat-toolbar">
+              <div className="chat-session-control">
+                <span className="chat-session-caption">当前会话</span>
+                {editing ? (
+                  <input
+                    className="field chat-session-edit"
+                    autoFocus
+                    value={editing.title}
+                    maxLength={60}
+                    onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+                    onBlur={() => void commitRename()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void commitRename()
+                      if (e.key === 'Escape') setEditing(null)
+                    }}
+                  />
+                ) : (
+                  <GlideSelect
+                    className="chat-session-glide"
+                    ariaLabel="切换当前对话"
+                    value={active}
+                    options={sessions.map((session) => ({
+                      value: session.id,
+                      label: session.title,
+                      description: `${session.messageCount} 条消息`,
+                    }))}
+                    renderOptionActions={(sessionId) => sessionId !== 'default' ? (
+                      <button
+                        type="button"
+                        className="chat-session-delete"
+                        title="删除此对话"
+                        aria-label={`删除${sessions.find((session) => session.id === sessionId)?.title ?? '对话'}`}
+                        disabled={busy && state.sessionId === sessionId}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          if (busy && state.sessionId === sessionId) return
+                          deleteSession(sessionId)
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            if (busy && state.sessionId === sessionId) return
+                            deleteSession(sessionId)
+                          }
+                        }}
+                      ><Icon name="trash" size={13} /></button>
+                    ) : null}
+                    onChange={(sessionId) => {
+                      if (sessionId !== active) void act('切换对话', () => loadSession(sessionId))
+                    }}
+                  />
+                )}
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="重命名当前对话"
+                  aria-label="重命名当前对话"
+                  onClick={() => setEditing({ id: active, title })}
+                >
+                  <Icon name="edit" size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="复制对话内容"
+                  aria-label="复制对话内容"
+                  onClick={() => void act('复制对话', async () => {
+                    const text = messages
+                      .map((message) => message.role === 'user'
+                        ? `我：${message.content}`
+                        : message.role === 'assistant' ? `小满：${message.content}` : message.content)
+                      .join('\n\n')
+                    await copyText(text || '（空对话）')
+                  })}
+                >
+                  <Icon name="copy" size={14} />
+                </button>
+              </div>
+              <Button small onClick={previewPlan} disabled={busy}>
+                <Icon name="sparkles" size={14} />今日规划
+              </Button>
+              <Button small primary onClick={createSession} disabled={createPending || sessions[0]?.messageCount === 0}>
+                <Icon name="plus" size={14} />新对话
+              </Button>
+            </div>
           </header>
 
           <div ref={scrollRef} onScroll={onScroll} className="chat-stream">
+            <div ref={streamContentRef} className="chat-stream-content">
             {messages.length === 0 && !streamText && drafts.length === 0 && (
               <div className="chat-empty">
                 <span className="rail-logo"><Paw size={22} /></span>
                 <p className="chat-empty-title">和小满聊聊今天要做什么</p>
                 <p className="chat-empty-text">
-                  可以直接说「明天 9 点提醒我开会」，也可以让它帮你整理和修改待办。
+                  记下一闪而过的想法，安排时间，或者一起把今天理出头绪。
                 </p>
+                <div className="chat-starters" aria-label="试试这样开始">
+                  {[
+                    '帮我安排今天的优先事项',
+                    '明天下午 3 点提醒我给客户回电话',
+                    '把我这周要做的事整理一下',
+                  ].map((prompt, index) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      className="chat-starter"
+                      onClick={() => {
+                        setInput(prompt)
+                        inputRef.current?.focus()
+                      }}
+                    >
+                      <span className="chat-starter-index">0{index + 1}</span>
+                      <span>{prompt}</span>
+                      <Icon name="chevron-down" size={13} />
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {messages.map((message, index) => (
@@ -459,10 +672,18 @@ export default function ChatPage(props: {
               </div>
             )}
             {activePlan && <PlanSnapshotCard plan={activePlan} />}
+            <div ref={bottomAnchorRef} className="chat-bottom-anchor" aria-hidden="true" />
+            </div>
           </div>
 
           <footer className="composer">
+            <div className="composer-prompt-label">
+              <span className="composer-prompt-dot" />
+              <span>和小满说说你的安排</span>
+              <span className="composer-prompt-hint">支持自然语言记录与规划</span>
+            </div>
             <textarea
+              ref={inputRef}
               rows={2}
               value={input}
               maxLength={12000}
@@ -497,9 +718,9 @@ export default function ChatPage(props: {
               {busy ? (
                 <Button small danger onClick={stop}><Icon name="stop" size={13} />停止</Button>
               ) : (
-                <Button small primary disabled={!input.trim() || sending} onClick={() => void send()}>
+                <SpecularButton className="composer-send-button" disabled={!input.trim() || sending} onClick={() => void send()}>
                   <Icon name="send" size={13} />发送
-                </Button>
+                </SpecularButton>
               )}
             </div>
           </footer>
@@ -558,6 +779,18 @@ export default function ChatPage(props: {
         </aside>
       </div>
 
+      {deleteConfirm && createPortal((
+        <div className="chat-delete-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setDeleteConfirm(null) }}>
+          <section className="chat-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="chat-delete-title">
+            <h2 id="chat-delete-title">删除这段对话？</h2>
+            <p>“{sessions.find((session) => session.id === deleteConfirm)?.title ?? '对话'}”中的消息和未提交的待办草稿都会被永久删除。</p>
+            <div>
+              <Button onClick={() => setDeleteConfirm(null)}>取消</Button>
+              <Button danger onClick={confirmDeleteSession}>删除对话</Button>
+            </div>
+          </section>
+        </div>
+      ), document.body)}
       {planPreview && (
         <PlanPreviewDialog
           preview={planPreview}
@@ -579,6 +812,7 @@ function MessageRow(props: {
   if (message.role === 'system') {
     return (
       <div className="msg-note">
+        {message.created_at && <time className="msg-time">{formatMessageTime(message.created_at)}</time>}
         <span><Icon name="check" size={11} />{message.content}</span>
       </div>
     )
@@ -586,36 +820,42 @@ function MessageRow(props: {
   if (message.role === 'user') {
     return (
       <div className="msg user">
-        <div className="bubble-user">{message.content}</div>
-        <span className="msg-user-avatar"><Icon name="user" size={13} /></span>
+        <div className="msg-body msg-body-user">
+          {message.created_at && <time className="msg-time msg-time-user">{formatMessageTime(message.created_at)}</time>}
+          <div className="bubble-user">{message.content}</div>
+        </div>
+        <span className="msg-user-avatar" aria-label="我">我</span>
       </div>
     )
   }
   const choices = message.choice ? choiceCount(message.choice) : 0
   return (
     <div className="msg">
-      <span className="msg-avatar"><Paw size={14} /></span>
-      <div className="bubble">
-        <Markdown text={message.content} />
-        {message.choice && choices > 0 && (
-          <div className="choice-box">
-            <p>{message.choice}</p>
-            <div className="choice-btns">
-              {Array.from({ length: choices }, (_, i) => i + 1).map((index) => (
-                <button
-                  key={index}
-                  type="button"
-                  disabled={props.busy}
-                  className="choice-btn"
-                  onClick={() => props.onChoose(index)}
-                >
-                  {index}
-                </button>
-              ))}
+      <span className="msg-avatar" aria-label="小满"><Paw size={15} /><i /></span>
+      <div className="msg-body">
+        {message.created_at && <time className="msg-time">{formatMessageTime(message.created_at)}</time>}
+        <div className="bubble">
+          <Markdown text={message.content} />
+          {message.choice && choices > 0 && (
+            <div className="choice-box">
+              <p>{message.choice}</p>
+              <div className="choice-btns">
+                {Array.from({ length: choices }, (_, i) => i + 1).map((index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    disabled={props.busy}
+                    className="choice-btn"
+                    onClick={() => props.onChoose(index)}
+                  >
+                    {index}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-        <Materials sources={message.sources} knowledge={message.knowledge} />
+          )}
+          <Materials sources={message.sources} knowledge={message.knowledge} />
+        </div>
         <div className="msg-foot">
           {message.tasks && message.tasks.length > 0 && (
             <button type="button" className="msg-link" onClick={props.onOpenTasks}>
@@ -636,14 +876,16 @@ function StreamRow(props: {
   knowledge: KnowledgeHit[]
 }) {
   return (
-    <div className="msg">
-      <span className="msg-avatar"><Paw size={14} /></span>
-      <div className="bubble streaming">
-        {props.text
-          ? <Markdown text={props.text} />
-          : <p className="status-line">{props.status || '正在思考…'}</p>}
-        <Materials sources={props.sources} knowledge={props.knowledge} />
-        {props.text && <p className="msg-meta" style={{ marginTop: 5 }}>{props.status}</p>}
+    <div className={`msg${props.text ? '' : ' msg-thinking'}`}>
+      <span className="msg-avatar" aria-label="小满"><Paw size={15} /><i /></span>
+      <div className="msg-body">
+        <div className="bubble streaming">
+          {props.text
+            ? <Markdown text={props.text} />
+            : <LatticeLoader label={props.status || '正在思考…'} />}
+          <Materials sources={props.sources} knowledge={props.knowledge} />
+          {props.text && <p className="msg-meta" style={{ marginTop: 5 }}>{props.status}</p>}
+        </div>
       </div>
     </div>
   )
@@ -715,7 +957,7 @@ function PlanPreviewDialog(props: {
 }) {
   const { snapshot } = props.preview
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="今日规划预览">
+    createPortal(<div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="今日规划预览">
       <div className="modal">
         <div className="modal-head">
           <Icon name="calendar" size={16} />
@@ -732,7 +974,7 @@ function PlanPreviewDialog(props: {
           </div>
         </div>
       </div>
-    </div>
+    </div>, document.body)
   )
 }
 

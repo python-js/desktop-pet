@@ -1,5 +1,5 @@
 // Native primitives styled after the 0.31 Qt shell (paper/night tokens in styles.css).
-import { ReactNode } from 'react'
+import { ReactNode, useLayoutEffect, useRef } from 'react'
 
 export type IconName =
   | 'home' | 'chat' | 'tasks' | 'settings' | 'bell' | 'clock' | 'check'
@@ -185,19 +185,115 @@ export function Toggle(props: {
 }
 
 export function Segmented<T extends string>(props: {
-  options: readonly { key: T; label: string }[]
+  options: readonly { key: T; label: ReactNode }[]
   value: T
   onChange: (value: T) => void
+  className?: string
+  variant?: 'default' | 'tabs' | 'compact'
+  ariaLabel?: string
 }) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const thumbRef = useRef<HTMLSpanElement>(null)
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const previous = useRef<{ left: number; width: number } | null>(null)
+  const liveProps = useRef(props)
+  liveProps.current = props
+  const optionsKey = props.options.map((option) => option.key).join('\u001f')
+
+  useLayoutEffect(() => {
+    const track = trackRef.current
+    const thumb = thumbRef.current
+    const item = itemRefs.current[props.options.findIndex((option) => option.key === props.value)]
+    if (!track || !thumb || !item) return
+    const trackRect = track.getBoundingClientRect()
+    const itemRect = item.getBoundingClientRect()
+    const next = { left: itemRect.left - trackRect.left - track.clientLeft, width: itemRect.width }
+    const thumbRect = thumb.getBoundingClientRect()
+    const from = previous.current
+      ? { left: thumbRect.left - trackRect.left - track.clientLeft, width: thumbRect.width }
+      : null
+    if (!from || window.matchMedia('(prefers-reduced-motion: reduce)').matches || typeof thumb.animate !== 'function') {
+      thumb.style.left = `${next.left}px`
+      thumb.style.width = `${next.width}px`
+      previous.current = next
+      return
+    }
+
+    const delta = next.left - from.left
+    const stretch = Math.min(Math.abs(delta) * 0.5, Math.max(next.width, from.width) * 1.25)
+    const stretched = delta >= 0
+      ? { left: from.left, width: from.width + stretch }
+      : { left: from.left - stretch, width: from.width + stretch }
+    const overshoot = Math.max(0, Math.min(next.width * 0.055, 4))
+    const frames: Keyframe[] = [
+      { left: `${from.left}px`, width: `${from.width}px`, offset: 0 },
+      { left: `${stretched.left}px`, width: `${stretched.width}px`, offset: 0.36 },
+      { left: `${next.left}px`, width: `${next.width + overshoot}px`, offset: 0.78 },
+      { left: `${next.left}px`, width: `${next.width}px`, offset: 1 },
+    ]
+    thumb.getAnimations().forEach((animation) => animation.cancel())
+    thumb.style.left = `${from.left}px`
+    thumb.style.width = `${from.width}px`
+    const animation = thumb.animate(frames, { duration: 440, easing: 'cubic-bezier(.23,1,.32,1)' })
+    animation.onfinish = () => {
+      thumb.style.left = `${next.left}px`
+      thumb.style.width = `${next.width}px`
+    }
+    previous.current = next
+  }, [props.value, optionsKey])
+
+  useLayoutEffect(() => {
+    const track = trackRef.current
+    if (!track) return
+    const update = () => {
+      const currentProps = liveProps.current
+      const item = itemRefs.current[currentProps.options.findIndex((option) => option.key === currentProps.value)]
+      const thumb = thumbRef.current
+      if (!item || !thumb) return
+      const trackRect = track.getBoundingClientRect()
+      const rect = item.getBoundingClientRect()
+      const next = { left: rect.left - trackRect.left - track.clientLeft, width: rect.width }
+      thumb.getAnimations().forEach((animation) => animation.cancel())
+      thumb.style.left = `${next.left}px`
+      thumb.style.width = `${next.width}px`
+      previous.current = next
+    }
+    const observer = new ResizeObserver(update)
+    observer.observe(track)
+    itemRefs.current.forEach((item) => item && observer.observe(item))
+    return () => observer.disconnect()
+  }, [])
+
+  const variant = props.variant ?? 'default'
   return (
-    <div className="seg">
+    <div
+      ref={trackRef}
+      className={`seg rubber-segment rubber-segment-${variant}${props.className ? ` ${props.className}` : ''}`}
+      role={variant === 'tabs' ? 'tablist' : 'group'}
+      aria-label={props.ariaLabel}
+    >
+      <span ref={thumbRef} className="rubber-segment-thumb" aria-hidden="true" />
       {props.options.map((option) => (
         <button
           key={option.key}
+          ref={(element) => { itemRefs.current[props.options.indexOf(option)] = element }}
           type="button"
-          className="seg-item"
-          aria-pressed={props.value === option.key}
+          role={variant === 'tabs' ? 'tab' : undefined}
+          aria-selected={variant === 'tabs' ? props.value === option.key : undefined}
+          aria-pressed={variant === 'tabs' ? undefined : props.value === option.key}
+          tabIndex={props.value === option.key ? 0 : -1}
+          className={`seg-item${props.value === option.key ? ' is-active' : ''}`}
           onClick={() => props.onChange(option.key)}
+          onKeyDown={(event) => {
+            const current = props.options.findIndex((item) => item.key === props.value)
+            const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0
+            const target = direction ? (current + direction + props.options.length) % props.options.length : event.key === 'Home' ? 0 : event.key === 'End' ? props.options.length - 1 : -1
+            if (target < 0) return
+            event.preventDefault()
+            const next = props.options[target]
+            props.onChange(next.key)
+            itemRefs.current[target]?.focus()
+          }}
         >
           {option.label}
         </button>

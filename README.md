@@ -2,7 +2,7 @@
 
 Windows 桌面 AI 助手：用自然语言创建和管理待办，通过桌面宠物提醒；包含首页、任务管理、多会话聊天、联网搜索、本地知识库、免打扰与钉钉通知。主窗口使用 React + QtWebEngine，待办和设置由 Python/PySide6 本地服务提供，数据保存在本机。
 
-当前代码版本：`0.31.0`。与根目录的 `opendoro` 是独立应用，不读取其模型配置或个人记录。当前以 Windows 10/11 x64 为目标；macOS 尚未完成验证。当前代码重新构建后的发行包尚未生成；最近的打包结果是旧版 `0.30.1`，早于 Web 迁移收尾，见 [Windows 构建说明](docs/WINDOWS_BUILD.md)。
+当前代码版本：`0.32.0`。与根目录的 `opendoro` 是独立应用，不读取其模型配置或个人记录。当前以 Windows 10/11 x64 为目标；macOS 尚未完成验证。`0.32.0` 的安装包尚未生成；最近的打包结果为 `0.31.0`，未包含本轮视觉升级，见 [Windows 构建说明](docs/WINDOWS_BUILD.md)。
 
 ## 功能概览
 
@@ -28,7 +28,9 @@ Pop-Location
 .\.venv\Scripts\python.exe -m desktop_pet
 ```
 
-后续修改 Web 前端后，在 `web/` 下运行 `npm run build`。也可使用 `start.ps1` 启动已经构建好的源码版。前端产物位于 `web/dist/`，主窗口由本地 WebView 加载，没有本地 HTTP 服务。
+开发前端时，使用 `start-dev.ps1` 启动桌面版热更新模式。它会启动 Vite 开发服务器并连接桌面 WebView；保存 React、TypeScript 或 CSS 文件后，界面会自动更新，通常无需重启桌面窗口。关闭桌面程序后，启动脚本会自动停止 Vite。
+
+`start.ps1` 用于启动已经构建好的源码版；面向发布的构建仍通过 `npm run build` 生成 `web/dist/` 单文件页面。Python 后端代码、桌面窗口外壳或 Python 依赖发生变更时，仍需重启应用。开发模式仅用于本机，不用于发行包。
 
 ## 试用流程
 

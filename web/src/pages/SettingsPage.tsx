@@ -37,6 +37,7 @@ export default function SettingsPage(props: {
     <div className="page">
       <header className="page-head">
         <div className="page-head-main">
+          <div className="eyebrow settings-eyebrow">MAKE IT YOURS　/　偏好</div>
           <h1 className="page-title">偏好设置</h1>
           <p className="page-sub">改动即时生效，无需重启。</p>
         </div>

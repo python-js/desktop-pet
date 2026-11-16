@@ -6,9 +6,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, QLockFile, Signal
-from PySide6.QtWidgets import (QApplication, QMainWindow, QMenu,
-                             QMessageBox, QSystemTrayIcon)
+from PySide6.QtCore import QThread, QTimer, QLockFile, Signal, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSystemTrayIcon
 
 from .assistant import ask, plain_text, RequestCancelled
 from .bridge import BridgeHost
@@ -156,20 +156,29 @@ class MainWindow(ShellMixin, QMainWindow):
         from .ui.webshell import WebShell
         self.web_shell = WebShell(self.bridge, self)
         self.setCentralWidget(self.web_shell)
+        self.devtools_shortcut = QShortcut(QKeySequence('F12'), self)
+        self.devtools_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.devtools_shortcut.activated.connect(self.open_web_devtools)
         self.statusBar().hide()
         self.bridge.emit_event('app.launched', {'version': __version__, 'theme': self.theme,
                                                 'shell': 'web'})
         self.tray = QSystemTrayIcon(icon, self)
         menu = QMenu(self)
-        menu.addAction('打开聊天与待办', self.show_main)
-        menu.addAction('显示 / 隐藏宠物', self.toggle_pet)
-        menu.addAction('找回宠物', self.reset_pet_position)
+        menu.addSection('小满桌面助手')
+        menu.addAction('打开主界面', self.show_main)
+        menu.addAction('网页调试工具', self.open_web_devtools)
+        self.tray_toggle_action = menu.addAction('隐藏桌宠', self.toggle_pet)
+        menu.addAction('找回桌宠位置', self.reset_pet_position)
         menu.addSeparator()
-        menu.addAction('退出', self.quit_app)
+        menu.addAction('退出小满', self.quit_app)
+        menu.aboutToShow.connect(self.update_tray_menu)
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(lambda reason: self.show_main() if reason == QSystemTrayIcon.DoubleClick else None)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
+        if self.settings_warning:
+            self.tray.showMessage('设置提示', self.settings_warning.strip(),
+                                  QSystemTrayIcon.Warning, 8000)
         self.pet = Pet(self)
         image_path = self.settings.get('pet_image', '')
         if image_path and Path(image_path).is_file():
@@ -179,9 +188,15 @@ class MainWindow(ShellMixin, QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_due)
         self.timer.start(2000)
-        if self.settings_warning:
-            self.tray.showMessage('设置提示', self.settings_warning.strip(),
-                                  QSystemTrayIcon.Warning, 8000)
+
+    def update_tray_menu(self):
+        """Refresh stateful tray labels when the native menu opens."""
+        pet_visible = bool(getattr(self, 'pet', None) and self.pet.isVisible())
+        self.tray_toggle_action.setText('隐藏桌宠' if pet_visible else '显示桌宠')
+
+    def open_web_devtools(self):
+        self.show_main()
+        self.web_shell.show_devtools()
 
     def selection_index(self, text):
         match = SELECTION.fullmatch(text)

@@ -145,6 +145,7 @@ export type ChatSession = {
 export type ChatMessage = {
   role: 'user' | 'assistant' | 'system' | string
   content: string
+  created_at?: string
 }
 
 export type SnapshotItem = {
@@ -325,6 +326,8 @@ export const api = {
     invoke<ChatSessionPayload>('chat.session', { sessionId, limit }),
   chatCreateSession: (title?: string) =>
     invoke<ChatSessionPayload & { sessionId: string }>('chat.createSession', { title }),
+  chatDeleteSession: (sessionId: string) =>
+    invoke<{ activeSession: string }>('chat.deleteSession', { sessionId }),
   chatRenameSession: (sessionId: string, title: string) =>
     invoke<void>('chat.renameSession', { sessionId, title }),
   chatSaveInput: (sessionId: string, text: string) =>

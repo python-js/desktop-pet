@@ -3,7 +3,7 @@ import random
 import time
 from PySide6.QtCore import QEvent, Qt, QTimer, QSize, QRect
 from PySide6.QtGui import QColor, QCursor, QFontMetrics, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QWidget, QLabel, QMenu
+from PySide6.QtWidgets import QApplication, QWidget, QLabel, QMenu, QStyle
 from ..animations import load_sequences
 from ..motion import CANVAS_SIZE, SUBJECT_SIZE, SUBJECT_BOTTOM
 
@@ -497,14 +497,28 @@ class Pet(QWidget):
     def show_menu(self, pos):
         self.stop_walking(save=False)
         menu = QMenu(self)
-        menu.addAction('打开聊天与待办', self.owner.show_main)
-        menu.addAction('更换宠物图片', self.owner.choose_image)
-        menu.addAction('切回 2D 形象' if self.mode == '3d' else '切换到 3D 形象', self.toggle_3d)
-        menu.addAction('恢复动画' if self.paused else '暂停动画', self.toggle_animation)
+        style = self.style()
+        menu.addSection('小满桌面助手')
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DesktopIcon),
+                       '打开主界面', self.owner.show_main)
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton),
+                       '显示 / 隐藏桌宠', self.owner.toggle_pet)
+        menu.addSeparator()
+        menu.addSection('桌宠外观与动作')
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+                       '更换桌宠图片', self.owner.choose_image)
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+                       '切回 2D 形象' if self.mode == '3d' else '切换到 3D 形象', self.toggle_3d)
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay if self.paused else QStyle.StandardPixmap.SP_MediaPause),
+                       '恢复动画' if self.paused else '暂停动画', self.toggle_animation)
         if self.mode == '3d':
-            menu.addAction('恢复走动' if not self.walking_enabled else '暂停走动', self.toggle_walking)
-        menu.addAction('重置宠物位置', self.reset_position)
-        menu.addAction('退出', self.owner.quit_app)
+            menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
+                           '恢复走动' if not self.walking_enabled else '暂停走动', self.toggle_walking)
+        menu.addSeparator()
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
+                       '找回桌宠位置', self.reset_position)
+        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton),
+                       '退出小满', self.owner.quit_app)
         menu.exec(pos)
         self.schedule_walk(5000)
 

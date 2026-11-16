@@ -3,9 +3,10 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QFile, QTimer, QUrl, Qt
 from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 # 只做存活探测：渲染进程被回收后 DOM 不会响应，脚本回调也不会到达。
@@ -14,6 +15,7 @@ HEALTH_JS = ("(() => { const root = document.getElementById('root');"
 
 # 隐藏期间 Chromium 会冻结合成器，恢复时可能只剩白底；超过此时长直接重载。
 HIDDEN_RELOAD_SECONDS = 120
+DEV_URL = 'http://127.0.0.1:5173/'
 
 
 def web_dist() -> Path:
@@ -32,6 +34,13 @@ class WebShell(QWidget):
     def __init__(self, bridge_host, parent=None):
         super().__init__(parent)
         self.view = QWebEngineView(self)
+        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.devtools_window = None
+        self.devtools_view = None
+        self.devtools_page = QWebEnginePage(self.view)
+        self.devtools_view = QWebEngineView()
+        self.devtools_view.setPage(self.devtools_page)
+        self.view.page().setDevToolsPage(self.devtools_page)
         self.channel = QWebChannel(self)
         self.channel.registerObject('bridge', bridge_host)
         self.view.page().setWebChannel(self.channel)
@@ -53,7 +62,28 @@ class WebShell(QWidget):
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self.reload)
-        self.view.load(QUrl.fromLocalFile(str(web_dist() / 'index.html')))
+        dev_mode = bool(os.environ.get('DESKTOP_PET_DEV')) and not getattr(sys, '_MEIPASS', None)
+        if dev_mode:
+            # A qrc:/// script URL is cross-origin from Vite's HTTP page; inline the
+            # Qt-provided client at document creation so the bridge is ready before React.
+            channel_script = QFile(':/qtwebchannel/qwebchannel.js')
+            if not channel_script.open(QFile.OpenModeFlag.ReadOnly):
+                raise RuntimeError('无法读取 Qt WebChannel 客户端脚本')
+            try:
+                source = bytes(channel_script.readAll()).decode('utf-8')
+            finally:
+                channel_script.close()
+            bridge_client = QWebEngineScript()
+            bridge_client.setName('desktop-pet-qwebchannel-client')
+            bridge_client.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+            bridge_client.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+            bridge_client.setRunsOnSubFrames(False)
+            bridge_client.setSourceCode(source)
+            self.view.page().scripts().insert(bridge_client)
+            dev_url = os.environ.get('DESKTOP_PET_DEV_URL', DEV_URL)
+            self.view.load(QUrl(dev_url))
+        else:
+            self.view.load(QUrl.fromLocalFile(str(web_dist() / 'index.html')))
 
     def _on_loaded(self, ok):
         self._loading = False
@@ -109,3 +139,19 @@ class WebShell(QWidget):
         self.render_lost = False
         self._loaded_hidden = False
         self.view.reload()
+
+    def show_devtools(self):
+        """Open the inspector attached to the embedded application page."""
+        if self.devtools_window is None:
+            window = QMainWindow(self.window())
+            window.setWindowTitle('网页调试工具 · 小满')
+            window.resize(980, 680)
+            window.setCentralWidget(self.devtools_view)
+            window.destroyed.connect(self._devtools_closed)
+            self.devtools_window = window
+        self.devtools_window.show()
+        self.devtools_window.raise_()
+        self.devtools_window.activateWindow()
+
+    def _devtools_closed(self, *_):
+        self.devtools_window = None

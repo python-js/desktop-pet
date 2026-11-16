@@ -357,11 +357,25 @@ class TaskStore:
         return row
 
     def create_session(self, title='新对话'):
+        latest = self.sessions()
+        if latest and latest[0]['id'] != 'default' and self.message_count(latest[0]['id']) == 0:
+            return latest[0]['id']
         session_id = uuid.uuid4().hex
         with self.db:
             self.db.execute('INSERT INTO sessions(id,title,updated_at) VALUES(?,?,?)',
                             (session_id, self.session_title(title), utc_now().isoformat()))
         return session_id
+
+    def delete_session(self, session_id):
+        self.session(session_id)
+        if session_id == 'default':
+            raise ValueError('默认对话不能删除')
+        if len(self.sessions()) <= 1:
+            raise ValueError('至少需要保留一个对话')
+        with self.db:
+            self.db.execute('DELETE FROM drafts WHERE session_id=?', (session_id,))
+            self.db.execute('DELETE FROM messages WHERE session_id=?', (session_id,))
+            self.db.execute('DELETE FROM sessions WHERE id=?', (session_id,))
 
     @staticmethod
     def session_title(title):
@@ -584,7 +598,7 @@ class TaskStore:
             self.db.execute('UPDATE sessions SET title=?,updated_at=? WHERE id=?', (title or '新对话', now, session_id))
 
     def messages(self, limit=100, session_id='default'):
-        rows = self.db.execute('SELECT role,content FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?', (session_id, limit)).fetchall()
+        rows = self.db.execute('SELECT role,content,created_at FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?', (session_id, limit)).fetchall()
         return [dict(row) for row in reversed(rows)]
 
     def message_count(self, session_id='default'):

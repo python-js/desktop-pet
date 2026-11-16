@@ -67,9 +67,11 @@ QCheckBox::indicator { width:17px; height:17px; }
 QStatusBar { color:#9A8F83; background:#FAF7F2; font-size:12px; border-top:1px solid #F1E8DC; }
 QStatusBar::item { border:0; }
 QToolTip { background:#3A322C; color:#FFF9F3; border:0; padding:8px; border-radius:6px; }
-QMenu { background:white; border:1px solid #F0E4D8; padding:6px; border-radius:10px; }
-QMenu::item { padding:8px 24px; border-radius:6px; }
-QMenu::item:selected { background:#FFF0EA; color:#D65F47; }
+QMenu { background:#202020; border:1px solid #343434; padding:7px 6px; border-radius:10px; color:#F5F5F5; }
+QMenu::item { min-width:132px; padding:8px 12px; margin:1px 2px; border-radius:6px; }
+QMenu::item:selected { background:#383838; color:#FFFFFF; }
+QMenu::item:disabled { color:#9D9D9D; background:transparent; font-size:10px; font-weight:600; padding-top:6px; padding-bottom:4px; }
+QMenu::separator { height:1px; margin:5px 7px; background:#414141; }
 QWidget#draftCard { background:#FFF6F1; border:1px solid #F6DCD2; border-radius:14px; }
 '''
 
@@ -161,9 +163,11 @@ QCheckBox::indicator { width:17px; height:17px; }
 QStatusBar { color:$ink_3; background:$bg; font-size:11px; border-top:1px solid $border; }
 QStatusBar::item { border:0; }
 QToolTip { background:$ink; color:$bg; border:0; padding:8px; border-radius:6px; }
-QMenu { background:$surface; border:1px solid $border; padding:6px; border-radius:10px; color:$ink; }
-QMenu::item { padding:8px 24px; border-radius:6px; }
-QMenu::item:selected { background:$brand_wash; color:$brand; }
+QMenu { background:#202020; border:1px solid #343434; padding:7px 6px; border-radius:10px; color:#F5F5F5; }
+QMenu::item { min-width:132px; padding:8px 12px; margin:1px 2px; border-radius:6px; }
+QMenu::item:selected { background:#383838; color:#FFFFFF; }
+QMenu::item:disabled { color:#9D9D9D; background:transparent; font-size:10px; font-weight:600; padding-top:6px; padding-bottom:4px; }
+QMenu::separator { height:1px; margin:5px 7px; background:#414141; }
 QWidget#draftCard { background:$brand_wash; border:1px solid $brand_line; border-radius:14px; }
 ''')
 

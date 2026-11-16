@@ -32,7 +32,7 @@ class ShellMixin:
             loaded = json.loads((self.root / 'settings.json').read_text(encoding='utf-8'))
             if isinstance(loaded, dict):
                 self.settings = {k: loaded[k] for k in ('base_url', 'model', 'pet_image', 'pet_image_original',
-                                                        'active_session', 'density', 'dnd_start', 'dnd_end')
+                                                        'active_session', 'chat_session_day', 'density', 'dnd_start', 'dnd_end')
                                  if isinstance(loaded.get(k), str)}
                 for key in ('stream', 'remember_key', 'pet_paused', 'pet_walking'):
                     if isinstance(loaded.get(key), bool):
@@ -125,7 +125,7 @@ class ShellMixin:
         settings = self.settings if settings is None else settings
         path = self.root / 'settings.json'
         temp = path.with_suffix('.tmp')
-        allowed = ('base_url', 'model', 'pet_image', 'pet_images', 'active_session', 'stream',
+        allowed = ('base_url', 'model', 'pet_image', 'pet_images', 'active_session', 'chat_session_day', 'stream',
                    'remember_key', 'pet_position', 'pet_paused', 'pet_walking', 'pet_mode',
                    'theme', 'density', 'early_nudge', 'sound_enabled', 'auto_postpone',
                    'dnd_enabled', 'dnd_start', 'dnd_end', 'web_search_enabled',

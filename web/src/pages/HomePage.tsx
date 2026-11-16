@@ -1,44 +1,89 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, onTasksChanged, Task, TaskEvent, TodayStats } from '../api'
+import { api, onPetChanged, onTasksChanged, PetGallery, Task, TaskEvent, TodayStats } from '../api'
 import {
   formatClock, formatDue, isOverdue, isToday, REPEAT_LABELS,
 } from '../tasks'
 import { Button, Icon, IconName, Paw, Pill } from '../ui'
+import { fetchCached, invalidateCache, readCache, writeCache } from '../queryCache'
 
 export default function HomePage(props: {
   onOpenChat: () => void
   onNewTask: () => void
+  active?: boolean
 }) {
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [history, setHistory] = useState<Task[]>([])
-  const [stats, setStats] = useState<TodayStats | null>(null)
-  const [events, setEvents] = useState<TaskEvent[]>([])
+  const [tasks, setTasks] = useState<Task[]>(() => readCache<Task[]>('tasks.pending') ?? [])
+  const [history, setHistory] = useState<Task[]>(() => readCache<Task[]>('tasks.done') ?? [])
+  const [stats, setStats] = useState<TodayStats | null>(() => readCache<TodayStats>('tasks.stats') ?? null)
+  const [events, setEvents] = useState<TaskEvent[]>(() => readCache<TaskEvent[]>('tasks.today-events') ?? [])
+  const [petGallery, setPetGallery] = useState<PetGallery | null>(() => readCache<PetGallery>('pet.gallery') ?? null)
   const [notice, setNotice] = useState('')
+  const [initialLoading, setInitialLoading] = useState(() => !readCache<Task[]>('tasks.pending')
+    || !readCache<TodayStats>('tasks.stats') || !readCache<TaskEvent[]>('tasks.today-events'))
+  const [refreshing, setRefreshing] = useState(false)
+
+  useEffect(() => {
+    const cachedTasks = readCache<Task[]>('tasks.pending')
+    const cachedHistory = readCache<Task[]>('tasks.done')
+    const cachedStats = readCache<TodayStats>('tasks.stats')
+    const cachedEvents = readCache<TaskEvent[]>('tasks.today-events')
+    const cachedPet = readCache<PetGallery>('pet.gallery')
+    if (cachedTasks) { setTasks(cachedTasks); setInitialLoading(false) }
+    if (cachedHistory) setHistory(cachedHistory)
+    if (cachedStats) setStats(cachedStats)
+    if (cachedEvents) setEvents(cachedEvents)
+    if (cachedPet) setPetGallery(cachedPet)
+  }, [])
 
   const load = useCallback(async () => {
+    setRefreshing(true)
     try {
-      const [list, done, today, log] = await Promise.all([
-        api.tasksList(), api.tasksHistory('done', ''), api.taskStats(), api.taskTodayEvents(),
+      const [list, done, today, log, pet] = await Promise.all([
+        fetchCached('tasks.pending', api.tasksList),
+        fetchCached('tasks.done', () => api.tasksHistory('done', '')),
+        fetchCached('tasks.stats', api.taskStats),
+        fetchCached('tasks.today-events', api.taskTodayEvents),
+        fetchCached('pet.gallery', api.petGallery),
       ])
       setTasks(list)
       setHistory(done)
       setStats(today)
       setEvents(log)
+      setPetGallery(pet)
+      writeCache('tasks.pending', list)
+      writeCache('tasks.done', done)
+      writeCache('tasks.stats', today)
+      writeCache('tasks.today-events', log)
+      writeCache('pet.gallery', pet)
       setNotice('')
     } catch (err) {
       setNotice(err instanceof Error ? err.message : '读取待办失败')
+    } finally {
+      setInitialLoading(false)
+      setRefreshing(false)
     }
   }, [])
 
   useEffect(() => {
+    if (!props.active) return
     void load()
-    return onTasksChanged(() => void load())
-  }, [load])
+    const offTasks = onTasksChanged(() => {
+      ;['tasks.pending', 'tasks.done', 'tasks.stats', 'tasks.today-events'].forEach(invalidateCache)
+      void load()
+    })
+    const offPet = onPetChanged(() => {
+      invalidateCache('pet.gallery')
+      void fetchCached('pet.gallery', api.petGallery, 0)
+        .then((pet) => { writeCache('pet.gallery', pet); setPetGallery(pet) })
+        .catch(() => {})
+    })
+    return () => { offTasks(); offPet() }
+  }, [load, props.active])
 
   const act = async (label: string, run: () => Promise<unknown>) => {
     try {
       await run()
       setNotice('')
+      ;['tasks.pending', 'tasks.done', 'tasks.stats', 'tasks.today-events'].forEach(invalidateCache)
       await load()
     } catch (err) {
       setNotice(`${label}失败：${err instanceof Error ? err.message : '请重试'}`)
@@ -73,8 +118,9 @@ export default function HomePage(props: {
     <div className="page home">
       <header className="page-head">
         <div className="page-head-main">
-          <div className="eyebrow">{dateLine}</div>
+          <div className="eyebrow home-date"><span className="home-date-mark" />{dateLine}</div>
           <h1 className="home-title">{greeting}</h1>
+          <p className="home-welcome">把今天，安排得有余裕。<span>事情一件一件来，小满会替你记得时间。</span></p>
         </div>
         <div className="home-actions">
           <Button onClick={props.onOpenChat}><Icon name="chat" size={15} />继续对话</Button>
@@ -84,7 +130,9 @@ export default function HomePage(props: {
       </header>
 
       {notice && <p className="status-line alert">{notice}</p>}
+      {refreshing && !initialLoading && <div className="page-refresh-indicator"><i />正在同步</div>}
 
+      {initialLoading ? <div className="page-skeleton home-skeleton" aria-label="正在加载首页"><span /><span /><span /></div> : <>
       <section className="hero-grid">
         {focus ? (
           <article className={`card hero ${focusOverdue ? 'is-alert' : 'is-calm'}`}>
@@ -150,6 +198,17 @@ export default function HomePage(props: {
               </Button>
               <span className="hint">处理结果会记入今天的工作日志。</span>
             </div>
+            <div className="hero-pet-stage" aria-label="小满正在陪伴你">
+              <span className="hero-pet-orbit orbit-one" />
+              <span className="hero-pet-orbit orbit-two" />
+              <span className="hero-pet-glow" />
+              <span className="hero-pet-figure" aria-hidden="true">
+                {petGallery?.preview || petGallery?.defaultThumb
+                  ? <img src={petGallery.preview || petGallery.defaultThumb} alt="" />
+                  : <Paw size={64} />}
+              </span>
+              <span className="hero-pet-caption">小满正在陪伴你</span>
+            </div>
           </article>
         ) : (
           <article className="card hero is-calm hero-empty">
@@ -163,6 +222,17 @@ export default function HomePage(props: {
             <div className="hero-actions">
               <Button primary onClick={props.onNewTask}><Icon name="plus" size={14} />去安排一件事</Button>
               <Button onClick={props.onOpenChat}><Icon name="chat" size={14} />继续对话</Button>
+            </div>
+            <div className="hero-pet-stage" aria-label="小满正在陪伴你">
+              <span className="hero-pet-orbit orbit-one" />
+              <span className="hero-pet-orbit orbit-two" />
+              <span className="hero-pet-glow" />
+              <span className="hero-pet-figure" aria-hidden="true">
+                {petGallery?.preview || petGallery?.defaultThumb
+                  ? <img src={petGallery.preview || petGallery.defaultThumb} alt="" />
+                  : <Paw size={64} />}
+              </span>
+              <span className="hero-pet-caption">今天也在你身边</span>
             </div>
           </article>
         )}
@@ -249,6 +319,7 @@ export default function HomePage(props: {
           )}
         </section>
       </div>
+      </>}
     </div>
   )
 }

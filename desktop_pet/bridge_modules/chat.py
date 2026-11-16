@@ -6,6 +6,7 @@ The only shell-side request state (worker, stream buffer, sources) lives in
 host.context['chat_state'] so the bridge survives page reloads.
 """
 import time
+from datetime import datetime
 
 from PySide6.QtCore import QObject, QTimer, Slot
 
@@ -96,7 +97,8 @@ def _visible(messages):
             content = decode_response(content)[0]
         elif role == 'user' and content.startswith('请根据下面的只读待办快照'):
             content = '帮我规划今天'
-        out.append({'role': 'system' if system else role, 'content': content})
+        out.append({'role': 'system' if system else role, 'content': content,
+                    'created_at': message.get('created_at')})
     return out
 
 
@@ -131,6 +133,27 @@ def _session_event(host, session_id, reason):
     host.emit_event('chat.changed', {'reason': reason, 'sessionId': session_id,
                                      'title': session['title'],
                                      'messageCount': store.message_count(session_id)})
+
+
+def _prepare_daily_session(host, window, store):
+    """Start a fresh chat on the first chat-page visit of each local day."""
+    today = datetime.now().astimezone().date().isoformat()
+    if window.settings.get('chat_session_day') == today:
+        return
+
+    current_id = window.active_session
+    try:
+        message_count = store.message_count(current_id)
+    except (ValueError, KeyError):
+        message_count = 0
+    if message_count:
+        session_id = store.create_session('新对话')
+        _activate(window, session_id)
+        _session_event(host, session_id, 'daily-create')
+    window.settings['chat_session_day'] = today
+    persist = getattr(window, 'persist_settings', None)
+    if callable(persist):
+        persist()
 
 
 def _session_payload(host, session_id, limit):
@@ -465,6 +488,7 @@ def handle(action, args, host):
     window = _window(host)
     store = _store(host)
     if action == 'sessions':
+        _prepare_daily_session(host, window, store)
         rows = store.sessions()
         return {'activeSession': window.active_session,
                 'sessions': [{'id': row['id'], 'title': row['title'],
@@ -494,6 +518,28 @@ def handle(action, args, host):
         _session_event(host, session_id, 'create')
         return {'sessionId': session_id,
                 **_session_payload(host, session_id, 100)}
+    if action == 'deleteSession':
+        session_id = _session_id(host, args)
+        if _state(host).get('session_id') == session_id:
+            raise BridgeError('该对话正在回复，暂时不能删除', code='CONFLICT')
+        choices = getattr(window, 'task_choice', {}) or {}
+        if session_id in choices:
+            raise BridgeError('该对话有待确认的操作，暂时不能删除', code='CONFLICT')
+        rows = store.sessions()
+        fallback = next((row['id'] for row in rows if row['id'] != session_id), None)
+        if fallback is None:
+            raise BridgeError('至少需要保留一个对话', code='CONFLICT')
+        try:
+            store.delete_session(session_id)
+        except ValueError as exc:
+            raise BridgeError(str(exc)) from None
+        retries = getattr(window, 'retry_by_session', None)
+        if isinstance(retries, dict):
+            retries.pop(session_id, None)
+        if window.active_session == session_id:
+            _activate(window, fallback)
+        host.emit_event('chat.deleted', {'sessionId': session_id, 'activeSession': window.active_session})
+        return {'activeSession': window.active_session}
     if action == 'renameSession':
         session_id = _session_id(host, args)
         try:
