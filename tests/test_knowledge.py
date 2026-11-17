@@ -39,6 +39,37 @@ class ExtractTests(unittest.TestCase):
         self.assertIn('北京', excel)
         self.assertIn('600', excel)
 
+    def test_docx_keeps_body_order_and_splits_at_questions(self):
+        from docx import Document
+        document = Document()
+        document.add_paragraph('第一段说明')
+        table = document.add_table(rows=1, cols=1)
+        table.cell(0, 0).text = '表格内容'
+        document.add_paragraph('第二段说明')
+        document.add_paragraph('1. 第一个问题')
+        document.add_paragraph('问题一的答案')
+        document.add_paragraph('2. 第二个问题')
+        document.add_paragraph('问题二的答案')
+        document.save(self.root / 'order.docx')
+        text = extract_text(self.root / 'order.docx')
+        self.assertLess(text.index('表格内容'), text.index('第二段说明'))
+        chunks = chunk_text(text)
+        self.assertEqual(len(chunks), 3)
+        self.assertTrue(chunks[0].startswith('第一段说明'))
+        self.assertTrue(chunks[1].startswith('1.'))
+        self.assertTrue(chunks[2].startswith('2.'))
+
+    def test_docx_table_image_gets_placeholder(self):
+        import base64
+        from docx import Document
+        (self.root / 'dot.png').write_bytes(base64.b64decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))
+        document = Document()
+        table = document.add_table(rows=1, cols=1)
+        table.cell(0, 0).paragraphs[0].add_run().add_picture(str(self.root / 'dot.png'))
+        document.save(self.root / 'image.docx')
+        self.assertIn('图片文字尚未识别', extract_text(self.root / 'image.docx'))
+
     def test_unsupported_and_empty_files_are_rejected(self):
         path = self.root / 'a.bin'
         path.write_bytes(b'data')
@@ -53,6 +84,12 @@ class ChunkTests(unittest.TestCase):
         self.assertGreaterEqual(len(chunks), 3)
         self.assertTrue(all(len(chunk) <= 350 for chunk in chunks))
         self.assertTrue(all(chunk.strip() for chunk in chunks))
+
+    def test_hard_boundary_is_never_merged(self):
+        chunks = chunk_text('甲' * 300 + '\f' + '乙' * 300, 600, 80)
+        self.assertEqual(len(chunks), 2)
+        self.assertTrue(chunks[0].startswith('甲'))
+        self.assertTrue(chunks[1].startswith('乙'))
 
 
 class KnowledgeBaseTests(unittest.TestCase):
@@ -92,6 +129,19 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.add()
         self.assertTrue(self.kb.search('报销'))
         self.assertTrue(self.kb.search('发票'))
+
+    def test_preview_snippet_is_centered_on_rare_query_term(self):
+        self.source.write_text(
+            '# 客户跟进\n\n' + '日常客户信息记录。' * 30 + '\n\n'
+            '如果一个客户已经连续6个月没有采购，你应该重新激活客户：新品激活、爆款激活、采购季节激活。\n\n'
+            + '其他备注。' * 20, encoding='utf-8')
+        self.add()
+        query = '如果一个客户已经连续6个月没有采购'
+        preview = next(hit for hit in self.kb.search(query, preview=True) if hit['kind'] == 'raw')
+        full = next(hit for hit in self.kb.search(query) if hit['kind'] == 'raw')
+        self.assertIn('个月没', preview['text'])
+        self.assertLessEqual(len(preview['text']), 302)
+        self.assertGreater(len(full['text']), len(preview['text']))
 
     def test_unchanged_file_is_skipped_and_force_rebuilds(self):
         self.add()

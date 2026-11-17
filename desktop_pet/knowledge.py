@@ -21,6 +21,7 @@ CHUNK_OVERLAP = 80
 WIKI_SECTION_SIZE = 6000
 WIKI_MAX_SECTIONS = 4
 MAX_HITS = 4
+SNIPPET_CHARS = 300
 WIKI_SYSTEM = ('你是知识库编辑。把用户提供的资料整理成结构化 Markdown 笔记。'
                '只输出 Markdown 正文，不要输出代码块围栏，不要编造资料中没有的事实。'
                '保留关键数字、结论、步骤、专有名词和资料中的明确限制。')
@@ -32,6 +33,11 @@ class KnowledgeError(ValueError):
 
 def chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     text = re.sub(r'\r\n?', '\n', str(text or ''))
+    if '\f' in text:
+        chunks = []
+        for section in text.split('\f'):
+            chunks.extend(chunk_text(section, size, overlap))
+        return chunks
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
     if not text:
         return []
@@ -108,16 +114,36 @@ def _read_pdf(path):
 def _read_docx(path):
     try:
         from docx import Document
+        from docx.oxml.ns import qn
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
     except ImportError:
         raise KnowledgeError('未安装 Word 解析组件，请重新安装应用') from None
     try:
         document = Document(str(path))
-        parts = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
-        for table in document.tables:
-            for row in table.rows:
-                cells = [cell.text.strip() for cell in row.cells]
-                if any(cells):
-                    parts.append(' | '.join(cells))
+        parts = []
+        section_re = re.compile(r'^\s*(?:\d{1,3}[.、．]|第[一二三四五六七八九十\d]+部分)')
+        heading_re = re.compile(r'^(?:Heading|Title|标题)', re.I)
+        for child in document.element.body.iterchildren():
+            if child.tag == qn('w:p'):
+                paragraph = Paragraph(child, document)
+                text = paragraph.text.strip()
+                style = str(getattr(paragraph.style, 'name', '') or '')
+                if text and (section_re.match(text) or heading_re.match(style)):
+                    # 硬切分标记：题号/标题处另起一块，避免上一题答案混进下一题。
+                    text = '\f' + text
+                if text:
+                    parts.append(text)
+            elif child.tag == qn('w:tbl'):
+                table = Table(child, document)
+                for row in table.rows:
+                    cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    images = len(row._tr.xpath('.//a:blip'))
+                    line = ' | '.join(cells)
+                    if images:
+                        line = f'{line} [包含 {images} 张图片，图片文字尚未识别]'.strip()
+                    if line:
+                        parts.append(line)
         return '\n\n'.join(parts)[:MAX_TEXT_CHARS]
     except Exception:
         raise KnowledgeError('Word 文档解析失败，请确认文件未损坏') from None
@@ -179,6 +205,29 @@ def _keyword_terms(text):
             seen.add(term)
             unique.append(term)
     return unique[:32]
+
+
+def _snippet(text, query, width=SNIPPET_CHARS):
+    text = str(text or '')
+    if len(text) <= width:
+        return text
+    candidates = []
+    for terms in (_fts_terms(query), _keyword_terms(query)):
+        for term in terms:
+            match = re.search(re.escape(term), text, re.I)
+            if match:
+                count = len(re.findall(re.escape(term), text, re.I))
+                candidates.append((count, -len(term), match.start(), term))
+        if candidates:
+            break
+    if not candidates:
+        return text[:width] + '…'
+    # 取最稀有命中词作为锚点，避免被“客户”这类高频词带到无关段首。
+    anchor = min(candidates)[2]
+    start = max(0, min(anchor - width // 6, len(text) - width))
+    end = start + width
+    snippet = text[start:end].strip()
+    return ('…' if start else '') + snippet + ('…' if end < len(text) else '')
 
 
 def _wiki_sections(text):
@@ -372,7 +421,7 @@ class KnowledgeBase:
                 if path.is_file():
                     path.unlink(missing_ok=True)
 
-    def search(self, query, limit=MAX_HITS):
+    def search(self, query, limit=MAX_HITS, preview=False):
         query = ' '.join(str(query or '').split())[:400]
         if not query:
             return []
@@ -404,7 +453,8 @@ class KnowledgeBase:
                 continue
             per_doc[row['doc_id']] = per_doc.get(row['doc_id'], 0) + 1
             hits.append({'doc_id': row['doc_id'], 'doc_name': row['doc_name'],
-                         'title': row['title'], 'kind': row['kind'], 'text': row['text']})
+                         'title': row['title'], 'kind': row['kind'],
+                         'text': _snippet(row['text'], query) if preview else row['text']})
             if len(hits) >= limit:
                 break
         return hits

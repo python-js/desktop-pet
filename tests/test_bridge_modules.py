@@ -41,8 +41,8 @@ class FakeKnowledge:
     def stats(self):
         return {'docs': 1}
 
-    def search(self, query):
-        return [{'title': query}]
+    def search(self, query, preview=False):
+        return [{'title': query, 'preview': preview}]
 
     def remove(self, doc_id):
         self.removed.append(doc_id)
@@ -357,7 +357,7 @@ class KnowledgeModuleTests(BridgeModuleTestsBase):
         self.assertEqual(self.invoke('knowledge.documents')['data']['documents'][0]['doc_id'], 'd1')
         self.assertEqual(self.invoke('knowledge.stats')['data'], {'docs': 1})
         self.assertEqual(self.invoke('knowledge.search', {'query': 'hi'})['data']['hits'],
-                         [{'title': 'hi'}])
+                         [{'title': 'hi', 'preview': True}])
         resp = self.invoke('knowledge.search', {'query': ''})
         self.assertEqual(resp['error']['code'], 'VALIDATION_ERROR')
 

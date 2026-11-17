@@ -18,7 +18,7 @@ def handle(action, args, host):
         query = str(args.get('query') or '').strip()
         if not query:
             raise BridgeError('query 不能为空')
-        return {'hits': list(knowledge.search(query))}
+        return {'hits': list(knowledge.search(query, preview=True))}
     if action == 'remove':
         doc_id = args.get('docId')
         if not isinstance(doc_id, str) or not doc_id:

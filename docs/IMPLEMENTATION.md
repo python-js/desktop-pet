@@ -330,3 +330,12 @@ py -3 -m venv .venv
 - 机制：Qt 6.8.3 实测最小化期间 `isVisible()` 仍为 True（`hideEvent`/`showEvent` 正常触发），`_loaded_hidden` 首帧保护不覆盖“最小化期间重载”；还原时 `ensure_alive()` 只探测 DOM，页面进程健康就不会重载，合成器若停在空帧则一直白屏。
 - `desktop_pet/ui/webshell.py`：探测成功后调用 `_nudge_repaint()`——普通窗口高度 +1px、50ms 后还原；最大化窗口改为视图高度 -1px 再还原；不重载、不改变页面与滚动位置。
 - 验证与边界见 [VALIDATION.md](VALIDATION.md)。
+
+## 0.32 本地知识库：预览定位与 Word 结构切块（2026-11-17）
+
+- 现象：检索预览把整块原文从块首展示；正确答案所在块前粘着上一题内容，看起来像检索不准。
+- 预览：`KnowledgeBase.search(..., preview=True)` 新增预览模式，`_snippet()` 以“命中词在块内出现次数最少”为锚点，向前保留约 1/6 窗口、共 300 字；`knowledge.search` 桥接只对预览启用，对话上下文仍取完整块（`format_context` 不变）。
+- Word 解析：`_read_docx()` 改为按 `document.element.body` 顺序遍历段落与表格，不再“先所有段落、后所有表格”；题号（`1.`）、`第X部分` 与标题样式段落前插入 `\f` 硬切分标记；表格行图片补“`[包含 N 张图片，图片文字尚未识别]`”占位，同一行多图合并计数。
+- 切块：`chunk_text()` 识别 `\f` 后分节独立切块，节与节不再合并；答案标题不作为边界，保证题目与答案留在同一节。
+- 重建：已有索引需通过“重新建索引”重跑才会应用新切块；Wiki 会按新分节重新生成。
+- 验证见 [VALIDATION.md](VALIDATION.md)。
