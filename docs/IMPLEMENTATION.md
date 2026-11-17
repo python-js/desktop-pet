@@ -313,3 +313,13 @@ py -3 -m venv .venv
 - 界面：输入区新增 `book` 图标的 `kb_toggle`，无资料时禁用，开关写入 `knowledge_enabled`；助手气泡下新增“资料：《…》”条，仅显示文档名、不持久化。设置页新增“本地知识库”卡：检索开关、资料清单、添加文件/文件夹、重建 Wiki、移除所选、取消导入、清空资料与状态行；导入在后台线程执行，单文件夹最多 200 个文件。
 - 依赖：`requirements.txt` 增加 `pypdf==6.21.4`、`python-docx==1.2.0`、`openpyxl==3.1.5`。
 - 边界：首版不做 OCR（扫描版 PDF 无文字层会提示“没有提取到可索引的文字”）、不做增量 Wiki 合并（重建按文件整体重生成）、不支持 .doc/.xls 旧格式；Wiki 生成耗时与模型质量取决于配置的服务。
+
+## 0.32 发送消息后整页刷新与输入回填修复（2026-11-17）
+
+- 现象：在对话页发送消息后界面整体闪一下，输入框里刚发出的文字又回来了。
+- 根因：`chat.changed`（reason=`user`）到达时前端无条件 `loadSession` 重取整段会话，页面进入加载骨架，随后 `applySession` 把服务端 `session.inputText` 重新写回输入框；而发送时前端只在 400ms 防抖后才 `chat.saveInput`，服务端此刻仍是旧文本。
+- `web/src/pages/ChatPage.tsx`：
+  - A：`send()` 发出消息后立即 `setInput('')` 并 `api.chatSaveInput(sessionId, '')`，不等防抖，避免后台同步在窗口内读回旧草稿。
+  - B：`applySession` 记录 `switching = activeRef.current !== data.session.id`，只有真正切换会话时才用 `session.inputText` 覆盖输入框；同一会话的后台同步不再回写。
+  - C：`chat.changed` 当前会话不再整栏 `loadSession`，只失效会话列表缓存并 `refreshSessions()`；消息已由乐观追加与 `assistant.result`/回执维护，消除加载骨架闪烁。
+- 验证与提交见 [VALIDATION.md](VALIDATION.md)；提交 `0a39190`（分支 `revision`）。

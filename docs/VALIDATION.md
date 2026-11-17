@@ -359,3 +359,10 @@ Windows 10、125%/150% DPI、双屏/跨屏宠物、休眠恢复、干净机器�
 - 将浅色主题调整为暖纸白/陶土色的编辑式风格，将深色主题调整为午夜蓝紫/暖金光晕的星夜风格；保持两套主题使用同一页面结构和交互。
 - 首页焦点待办改为宽幅舞台，并从宠物图库读取当前形象展示；重整今日时间线与周边信息层级。同步调整导航、聊天输入区、任务列表、设置卡片和响应式间距。
 - TypeScript 检查与 Vite 生产构建通过（`web/dist/index.html` 357.67 kB，gzip 106.71 kB）。尚未生成 0.32 Windows 包，未做真实桌面多 DPI/多屏视觉验收。
+
+## 发送消息后整页刷新与输入回填修复（2026-11-17）
+
+- 根因与改动见 [IMPLEMENTATION.md](IMPLEMENTATION.md) 同名条目；仅改 `web/src/pages/ChatPage.tsx`（发送后立即持久化空输入、同会话同步不回写输入框、当前会话 `chat.changed` 不再整栏重取）。
+- 静态检查：`./node_modules/.bin/tsc --noEmit` 退出 0。
+- 真实窗口验证（`start-dev` 热更新模式，Vite 5174，CDP `127.0.0.1:9223`）：发送前在输入框填入文本并点击发送，读回 `input=""`、`skeleton=false`、`refreshing=false`，页面标记 `window.__petNoReload='alive'` 在发送前后一致，确认未发生整页刷新。
+- 提交：`0a39190`（分支 `revision`，仅该文件）；前端改动由 HMR 生效，Python 改动仍需重启窗口。
