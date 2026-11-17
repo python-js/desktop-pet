@@ -340,3 +340,13 @@ py -3 -m venv .venv
 - 重建：已有索引需通过“重新建索引”重跑才会应用新切块；Wiki 会按新分节重新生成。
 - 命中高亮（仅前端，工作区 `KnowledgePage.tsx`）：预览渲染按与索引一致的规则从查询提取中文 3-gram/英文词，实词无命中时回退 2-gram；在片段内合并相邻/重叠命中区间（间隔 1 字也合并，如“连续6个月”），用 `<mark class="knowledge-hit-mark">` 标出，颜色取 `--brand-wash` 适配两套主题；后端与桥接协议不变。
 - 验证见 [VALIDATION.md](VALIDATION.md)。
+
+## 0.32 主题切换卡顿修复（2026-11-17）
+
+- 现象：点侧栏主题按钮或设置页“纸白/夜幕”，480ms 圆形扩散动画期间明显掉帧。
+- 根因：一次切换触发两次整页渲染——点击时 `flushSync(setSettings)` 产生约 90ms 长任务；约 134ms 后 Python `settings.set` 回发 `settings.changed`，App 合并 patch 再渲染一次（约 100ms），正好落在扩散动画中段。单纯改 `data-theme` 的 CSS 切换本身无长任务。
+- 方案（保留扩散动画）：主题从 App 全局 `settings` 拆成独立订阅源 `web/src/theme.ts`（`useSyncExternalStore`）。`applyTheme()` 只改 `documentElement.dataset.theme` 并通知订阅者；`persistTheme()` 走 `api.setSettings` 落盘；`setTheme()` 合二为一。
+- `web/src/App.tsx`：加载设置后 `initTheme()` 应用持久化主题；`settings.changed` 中剥离 `theme`（外部变更只走 `applyTheme`，不再回灌 `settings` 触发整页渲染）；侧栏主题按钮拆为 `RailThemeButton` 订阅 `useTheme`；圆形扩散逻辑保留在模块级 `toggleThemeWithReveal()`，VT 回调里只做 `setTheme`，不再 `flushSync` 整页。
+- `web/src/pages/SettingsPage.tsx`：外观卡的“主题”分段控件订阅 `useTheme` / `setTheme`，不再读写 `props.settings.theme`；密度等其他设置维持原路径。
+- 兼容：减少动态效果或无 `startViewTransition` 时仍即时切换；`settings.theme` 仅作为启动时的持久化初始值，运行时以 `theme.ts` 为准。
+- 验证见 [VALIDATION.md](VALIDATION.md)。
