@@ -122,8 +122,23 @@ class WebShell(QWidget):
         ready, _, count = str(value).partition(':')
         if ready == 'complete' and count.isdigit() and int(count) > 0:
             self._probe_ok = True
+            self._nudge_repaint()
         else:
             self.reload()
+
+    def _nudge_repaint(self):
+        """最小化恢复后合成器可能停在空帧；轻抖 1px 强制重新出帧。"""
+        window = self.window()
+        if window is None or not window.isVisible() or window.isMinimized():
+            return
+        if window.isMaximized():
+            size = self.view.size()
+            self.view.resize(size.width(), max(1, size.height() - 1))
+            QTimer.singleShot(50, lambda: self.view.resize(size))
+            return
+        geometry = window.geometry()
+        window.resize(geometry.width(), geometry.height() + 1)
+        QTimer.singleShot(50, lambda: window.resize(geometry.size()))
 
     def _on_probe_timeout(self):
         if not self._probe_ok:

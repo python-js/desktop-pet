@@ -366,3 +366,9 @@ Windows 10、125%/150% DPI、双屏/跨屏宠物、休眠恢复、干净机器�
 - 静态检查：`./node_modules/.bin/tsc --noEmit` 退出 0。
 - 真实窗口验证（`start-dev` 热更新模式，Vite 5174，CDP `127.0.0.1:9223`）：发送前在输入框填入文本并点击发送，读回 `input=""`、`skeleton=false`、`refreshing=false`，页面标记 `window.__petNoReload='alive'` 在发送前后一致，确认未发生整页刷新。
 - 提交：`0a39190`（分支 `revision`，仅该文件）；前端改动由 HMR 生效，Python 改动仍需重启窗口。
+
+## 最小化还原白屏：1px 重绘兜底（2026-11-17）
+
+- 独立 WebShell 窗口实测：`ensure_alive()` 探测成功后窗口尺寸从 900×700 → 900×701 → 900×700，页面进程保持健康；最大化分支未实机覆盖。
+- 回归：全量 170 项 Python 测试中 5 项失败，集中在 `messages()` 返回值新增 `created_at` 的既有断言，以及用例间顺序污染（`test_show_after_hide_passes_elapsed_to_shell` 单独运行通过），均与本次仅改 WebShell 无关；`py_compile` 通过。
+- 边界：本机未能复现白屏本身，1px 抖动是否足够让合成器恢复出帧需在真实复现时确认；若仍白屏，下一步考虑“长时最小化还原即重载”或关闭 Chromium 遮挡计算。运行中的实例需重启才能加载本改动。

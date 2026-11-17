@@ -323,3 +323,10 @@ py -3 -m venv .venv
   - B：`applySession` 记录 `switching = activeRef.current !== data.session.id`，只有真正切换会话时才用 `session.inputText` 覆盖输入框；同一会话的后台同步不再回写。
   - C：`chat.changed` 当前会话不再整栏 `loadSession`，只失效会话列表缓存并 `refreshSessions()`；消息已由乐观追加与 `assistant.result`/回执维护，消除加载骨架闪烁。
 - 验证与提交见 [VALIDATION.md](VALIDATION.md)；提交 `0a39190`（分支 `revision`）。
+
+## 最小化还原白屏：1px 重绘兜底（2026-11-17）
+
+- 现象：主窗最小化一段时间后还原，WebEngine 区域空白。
+- 机制：Qt 6.8.3 实测最小化期间 `isVisible()` 仍为 True（`hideEvent`/`showEvent` 正常触发），`_loaded_hidden` 首帧保护不覆盖“最小化期间重载”；还原时 `ensure_alive()` 只探测 DOM，页面进程健康就不会重载，合成器若停在空帧则一直白屏。
+- `desktop_pet/ui/webshell.py`：探测成功后调用 `_nudge_repaint()`——普通窗口高度 +1px、50ms 后还原；最大化窗口改为视图高度 -1px 再还原；不重载、不改变页面与滚动位置。
+- 验证与边界见 [VALIDATION.md](VALIDATION.md)。
