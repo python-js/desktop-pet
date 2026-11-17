@@ -112,13 +112,15 @@ export default function ChatPage(props: {
   const loadRequestRef = useRef(0)
 
   const applySession = useCallback((data: ChatSessionPayload) => {
+    const switching = activeRef.current !== data.session.id
     activeRef.current = data.session.id
     writeCache('chat.activeSession', data.session.id)
     setActive(data.session.id)
     setPayload(data)
     setMessages(data.messages.map((message) => ({ ...message })))
     setDrafts(data.drafts)
-    setInput(data.session.inputText)
+    // 同一会话的后台同步不覆盖输入框，否则发送后会被服务端旧文本回填。
+    if (switching) setInput(data.session.inputText)
     setFailure(null)
     setPlanCard(null)
     setEditing(null)
@@ -297,14 +299,11 @@ export default function ChatPage(props: {
   useEffect(() => onChatChanged((event) => {
     invalidateCache('chat.sessions')
     if (event.sessionId) invalidateCache(`chat.session.${event.sessionId}`)
-    if (props.active) {
-      void refreshSessions()
-      if (event.sessionId === activeRef.current) void loadSession(event.sessionId).catch(() => {
-        setRefreshing(false)
-        setNotice('同步失败，仍显示上次内容。')
-      })
-    }
-  }), [props.active, refreshSessions, loadSession])
+    if (!props.active) return
+    void refreshSessions()
+    // 当前会话的消息已由乐观追加与 assistant.result/回执维护；
+    // 整栏重取会闪加载骨架并回写服务端旧输入，这里只同步会话列表。
+  }), [props.active, refreshSessions])
 
   // Persist the unsent composer text so a page reload or session switch keeps it.
   useEffect(() => {
@@ -402,6 +401,8 @@ export default function ChatPage(props: {
     stickRef.current = true
     setMessages((prev) => [...prev, { role: 'user', content: text, created_at: new Date().toISOString() }])
     setInput('')
+    // 立即持久化空输入，避免后台同步在防抖窗口内读回旧草稿。
+    void api.chatSaveInput(activeRef.current, '').catch(() => {})
     try {
       await api.chatSend(activeRef.current, text)
     } catch (err) {
