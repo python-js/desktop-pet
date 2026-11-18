@@ -129,7 +129,7 @@ class ShellMixin:
                    'remember_key', 'pet_position', 'pet_paused', 'pet_walking', 'pet_mode',
                    'theme', 'density', 'early_nudge', 'sound_enabled', 'auto_postpone',
                    'dnd_enabled', 'dnd_start', 'dnd_end', 'web_search_enabled',
-                   'knowledge_enabled')
+                   'knowledge_enabled', 'last_inbox_review')
         temp.write_text(json.dumps({k: settings[k] for k in allowed if k in settings}, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(path)
 

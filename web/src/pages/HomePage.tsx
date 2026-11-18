@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, onPetChanged, onTasksChanged, PetGallery, Task, TaskEvent, TodayStats } from '../api'
 import {
-  formatClock, formatDue, isOverdue, isToday, REPEAT_LABELS,
+  formatClock, formatDue, isOverdue, isTimed, isToday, REPEAT_LABELS,
 } from '../tasks'
 import { Button, Icon, IconName, Paw, Pill } from '../ui'
 import { fetchCached, invalidateCache, readCache, writeCache } from '../queryCache'
@@ -90,11 +90,12 @@ export default function HomePage(props: {
     }
   }
 
-  const overdue = tasks.filter(isOverdue)
-  const todayPending = tasks.filter(isToday)
-  const focus = overdue[0] ?? tasks[0]
+  const timedRows = tasks.filter(isTimed)
+  const overdue = timedRows.filter(isOverdue)
+  const todayPending = timedRows.filter(isToday)
+  const focus = overdue[0] ?? timedRows[0]
   const focusOverdue = focus ? isOverdue(focus) : false
-  const next = tasks[0]
+  const next = timedRows[0]
 
   const doneToday = useMemo(() => history.filter((task) => task.completed_at && isTodayAt(task.completed_at)), [history])
   const done = stats?.completed_today ?? doneToday.length
@@ -106,7 +107,9 @@ export default function HomePage(props: {
       ...todayPending.map((task) => ({ task, done: false })),
       ...doneToday.map((task) => ({ task, done: true })),
     ]
-    return rows.sort((a, b) => new Date(a.task.due_at).getTime() - new Date(b.task.due_at).getTime()).slice(0, 6)
+    return rows.sort((a, b) =>
+      new Date(a.task.due_at ?? a.task.completed_at ?? a.task.created_at).getTime()
+      - new Date(b.task.due_at ?? b.task.completed_at ?? b.task.created_at).getTime()).slice(0, 6)
   }, [todayPending, doneToday])
 
   const logCards = useMemo(() => buildLogCards(events), [events])
@@ -327,15 +330,16 @@ export default function HomePage(props: {
 function DayRow(props: { task: Task; done: boolean }) {
   const { task, done } = props
   const overdue = !done && isOverdue(task)
-  const late = done && task.completed_at
+  const late = done && task.completed_at && task.due_at
     ? Math.round((new Date(task.completed_at).getTime() - new Date(task.due_at).getTime()) / 60000)
-    : 0
+    : null
   const sub = done
-    ? `${formatClock(task.completed_at ?? task.due_at)} 完成${late > 0 ? `，晚 ${late} 分钟` : '，很准时'}`
+    ? `${formatClock(task.completed_at ?? task.due_at ?? task.created_at)} 完成${
+      late === null ? '' : late > 0 ? `，晚 ${late} 分钟` : '，很准时'}`
     : task.note || (task.dingtalk ? '钉钉' : '')
   return (
     <div className={`day-row${done ? ' done' : overdue ? ' overdue' : ''}`}>
-      <div className="day-time">{formatClock(task.due_at)}</div>
+      <div className="day-time">{formatClock(task.due_at ?? task.completed_at ?? task.created_at)}</div>
       <span className={`day-dot${done ? ' done' : overdue ? ' overdue' : ''}`} aria-hidden>
         {done && <Icon name="check" size={10} />}
       </span>
@@ -349,7 +353,7 @@ function DayRow(props: { task: Task; done: boolean }) {
         ) : (
           <Pill tone={overdue ? 'danger' : 'plain'}>
             {overdue
-              ? <><Icon name="alert" size={11} />{overdueText(task.due_at)}</>
+              ? <><Icon name="alert" size={11} />{overdueText(task.due_at as string)}</>
               : <><Icon name="clock" size={11} />{formatDue(task.due_at)}</>}
           </Pill>
         )}
@@ -452,6 +456,7 @@ function buildLogCards(events: TaskEvent[]): LogCardData[] {
 }
 
 function focusProgress(task: Task): number {
+  if (!task.due_at) return 12
   const due = new Date(task.due_at).getTime()
   const now = Date.now()
   if (due <= now) return 100

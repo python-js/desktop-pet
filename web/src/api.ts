@@ -82,14 +82,15 @@ export type SystemInfo = {
 }
 
 export type RepeatRule = 'none' | 'daily' | 'weekdays' | 'weekly'
+export type Horizon = 'timed' | 'week' | 'month' | 'someday'
 
 export type Task = {
   id: string
   title: string
-  due_at: string
+  due_at: string | null
   created_at: string
   repeat_rule: RepeatRule
-  scheduled_at: string
+  scheduled_at: string | null
   dingtalk: number
   source: string
   note: string
@@ -101,6 +102,8 @@ export type Task = {
   early_notified_at: string | null
   muted_until: string | null
   next_id: string | null
+  horizon: Horizon
+  remind_at: string | null
 }
 
 export type TaskEvent = {
@@ -286,12 +289,19 @@ export const api = {
   tasksList: () => invoke<Task[]>('tasks.list'),
   tasksHistory: (status: 'done' = 'done', search = '') =>
     invoke<Task[]>('tasks.history', { status, search }),
-  taskAdd: (payload: { title: string; dueAt: string; repeat?: RepeatRule; dingtalk?: boolean; note?: string }) =>
-    invoke<Task>('tasks.add', payload),
+  taskAdd: (payload: {
+    title: string
+    dueAt?: string | null
+    horizon?: Horizon
+    repeat?: RepeatRule
+    dingtalk?: boolean
+    note?: string
+  }) => invoke<Task>('tasks.add', payload),
   taskEdit: (payload: {
     id: string
     title: string
-    dueAt: string
+    dueAt?: string | null
+    horizon?: Horizon
     repeat?: RepeatRule
     dingtalk?: boolean
   }) => invoke<Task>('tasks.edit', payload),

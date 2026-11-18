@@ -1,24 +1,27 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { api, onTasksChanged, RepeatRule, Task } from '../api'
+import { api, Horizon, onTasksChanged, RepeatRule, Task } from '../api'
 import { Button, Icon, Pill, Segmented, Toggle } from '../ui'
 import SpotlightCard from '../components/SpotlightCard'
 import Calendar from '../components/Calendar'
 import GlideSelect from '../components/GlideSelect'
 import { fetchCached, invalidateCache, isFresh, readCache } from '../queryCache'
 import {
-  defaultDueInput, formatDue, fromLocalInput, isOverdue, isToday,
+  defaultDueInput, formatDue, fromLocalInput, HORIZON_LABELS, HORIZON_OPTIONS, isOverdue, isTimed, isToday,
   REPEAT_LABELS, REPEAT_OPTIONS, toLocalInput,
 } from '../tasks'
 
 type Mode = 'pending' | 'done'
-type Period = 'all' | 'today' | 'overdue' | 'future'
+type Period = 'all' | 'today' | 'overdue' | 'future' | 'week' | 'month' | 'someday'
 
 const PERIOD_OPTIONS: { key: Period; label: string }[] = [
-  { key: 'all', label: '全部时间' },
+  { key: 'all', label: '全部' },
   { key: 'today', label: '今天' },
   { key: 'overdue', label: '逾期' },
   { key: 'future', label: '未来' },
+  { key: 'week', label: '本周' },
+  { key: 'month', label: '本月' },
+  { key: 'someday', label: '待安排' },
 ]
 
 export default function TasksPage(props: {
@@ -143,21 +146,32 @@ export default function TasksPage(props: {
   const rows = (mode === 'pending' ? pendingRows : historyRows).filter((task) => {
     if (term && !task.title.toLowerCase().includes(term)) return false
     if (mode !== 'pending') return true
-    if (period === 'today') return isToday(task)
+    if (period === 'today') return isTimed(task) && isToday(task)
     if (period === 'overdue') return isOverdue(task)
-    if (period === 'future') return new Date(task.due_at).getTime() > Date.now()
+    if (period === 'future') return isTimed(task) && new Date(task.due_at).getTime() > Date.now()
+    if (period === 'week') return task.horizon === 'week'
+    if (period === 'month') return task.horizon === 'month'
+    if (period === 'someday') return task.horizon === 'someday'
     return true
   })
 
   const groups = useMemo(() => {
     if (mode === 'done') return [{ label: `已完成 ${rows.length} 项`, tone: '', rows }]
     const overdue = rows.filter(isOverdue)
-    const today = rows.filter((task) => !isOverdue(task) && isToday(task))
-    const future = rows.filter((task) => !isOverdue(task) && !isToday(task))
+    const rest = rows.filter((task) => !isOverdue(task))
+    const timed = rest.filter(isTimed)
+    const today = timed.filter(isToday)
+    const future = timed.filter((task) => !isToday(task))
+    const week = rest.filter((task) => task.horizon === 'week')
+    const month = rest.filter((task) => task.horizon === 'month')
+    const someday = rest.filter((task) => task.horizon === 'someday')
     return [
       { label: '逾期 · 需要你回应', tone: 'alert', rows: overdue },
       { label: `今天 ${today.length} 项`, tone: '', rows: today },
       { label: `接下来 ${future.length} 项`, tone: '', rows: future },
+      { label: `本周 ${week.length} 项`, tone: '', rows: week },
+      { label: `本月 ${month.length} 项`, tone: '', rows: month },
+      { label: `待安排 ${someday.length} 项`, tone: '', rows: someday },
     ].filter((group) => group.rows.length > 0)
   }, [mode, rows])
 
@@ -369,7 +383,9 @@ function TaskRow(props: {
   const overdue = isOverdue(task)
   const done = mode === 'done'
   const deferred = !done && task.deferred === 1
-  const soon = !done && !overdue && !deferred
+  const someday = task.horizon === 'someday'
+  const bucket = task.horizon === 'week' || task.horizon === 'month'
+  const soon = !done && !overdue && !deferred && isTimed(task)
     && new Date(task.due_at).getTime() - Date.now() <= 30 * 60000
   const sub = metaText(task)
   return (
@@ -385,8 +401,8 @@ function TaskRow(props: {
         <Icon name="check" size={11} />
       </button>
       <div className="task-time">
-        <small>{dayLabel(task.due_at)}</small>
-        {formatClock(task.due_at)}
+        <small>{someday ? '收集箱' : dayLabel(task.due_at as string)}</small>
+        {someday ? '待整理' : bucket ? '截止' : formatClock(task.due_at)}
       </div>
       <button
         type="button"
@@ -409,25 +425,31 @@ function TaskRow(props: {
         ) : deferred ? (
           <Pill tone="caution"><Icon name="clock" size={11} />已延期</Pill>
         ) : overdue ? (
-          <Pill tone="danger"><Icon name="alert" size={11} />{overdueText(task.due_at)}</Pill>
+          <Pill tone="danger"><Icon name="alert" size={11} />{overdueText(task.due_at as string)}</Pill>
+        ) : someday ? (
+          <Pill tone="plain"><Icon name="list" size={11} />待安排</Pill>
+        ) : bucket ? (
+          <Pill tone="plain"><Icon name="calendar" size={11} />{task.horizon === 'week' ? '本周内' : '本月内'}</Pill>
         ) : (
           <Pill tone={soon ? 'caution' : 'plain'}>
-            <Icon name="clock" size={11} />{dueChip(task.due_at)}
+            <Icon name="clock" size={11} />{dueChip(task.due_at as string)}
           </Pill>
         )}
         <div className="task-actions">
           {!done && (
             <>
-              <button
-                type="button"
-                className="task-action"
-                data-warm-tooltip="十分钟后提醒"
-                title="十分钟后提醒"
-                aria-label="十分钟后提醒"
-                onClick={props.onSnooze}
-              >
-                <Icon name="clock" size={14} />
-              </button>
+              {!someday && (
+                <button
+                  type="button"
+                  className="task-action"
+                  data-warm-tooltip="十分钟后提醒"
+                  title="十分钟后提醒"
+                  aria-label="十分钟后提醒"
+                  onClick={props.onSnooze}
+                >
+                  <Icon name="clock" size={14} />
+                </button>
+              )}
               <button
                 type="button"
                 className="task-action"
@@ -462,7 +484,8 @@ function TaskEditor(props: {
   onSaved: () => void | Promise<void>
 }) {
   const [title, setTitle] = useState(props.initial?.title ?? '')
-  const [due, setDue] = useState(props.initial ? toLocalInput(props.initial.due_at) : defaultDueInput())
+  const [horizon, setHorizon] = useState<Horizon>(props.initial?.horizon ?? 'timed')
+  const [due, setDue] = useState(props.initial?.due_at ? toLocalInput(props.initial.due_at) : defaultDueInput())
   const [repeat, setRepeat] = useState<RepeatRule>(props.initial?.repeat_rule ?? 'none')
   const [dingtalk, setDingtalk] = useState(Boolean(props.initial?.dingtalk))
   const [note, setNote] = useState(props.initial?.note ?? '')
@@ -526,19 +549,20 @@ function TaskEditor(props: {
     }
     setSaving(true)
     try {
+      const timed = horizon === 'timed'
       if (props.initial) {
         await api.taskEdit({
           id: props.initial.id,
           title: title.trim(),
-          dueAt: fromLocalInput(due),
-          repeat,
+          horizon,
+          ...(timed ? { dueAt: fromLocalInput(due), repeat } : {}),
           dingtalk,
         })
       } else {
         await api.taskAdd({
           title: title.trim(),
-          dueAt: fromLocalInput(due),
-          repeat,
+          horizon,
+          ...(timed ? { dueAt: fromLocalInput(due), repeat } : {}),
           dingtalk,
           note: note.trim(),
         })
@@ -573,6 +597,11 @@ function TaskEditor(props: {
           placeholder="要做的事"
         />
       </label>
+      <div className="task-horizon-section">
+        <span className="field-label task-section-label">期限</span>
+        <Segmented options={HORIZON_OPTIONS} value={horizon} onChange={setHorizon} ariaLabel="任务期限" />
+      </div>
+      {horizon === 'timed' ? <>
       <div className="task-datetime-section">
         <span className="field-label task-section-label">提醒时间</span>
         <div className="task-date-control" ref={calendarRef}>
@@ -636,6 +665,9 @@ function TaskEditor(props: {
       {hint.text && (
         <p className={`status-line${hint.tone !== 'plain' ? ` ${hint.tone}` : ''}`}>{hint.text}</p>
       )}
+      </> : (
+        <p className="status-line calm">{horizonHint(horizon)}</p>
+      )}
       {!props.initial && (
         <label>
           <span className="field-label">备注 <span className="optional-label">可选</span></span>
@@ -643,10 +675,12 @@ function TaskEditor(props: {
         </label>
       )}
       <div className="editor-settings">
-        <div>
-          <span className="field-label">重复</span>
-          <Segmented options={REPEAT_OPTIONS} value={repeat} onChange={setRepeat} />
-        </div>
+        {horizon === 'timed' && (
+          <div>
+            <span className="field-label">重复</span>
+            <Segmented options={REPEAT_OPTIONS} value={repeat} onChange={setRepeat} />
+          </div>
+        )}
         <Toggle label="推送到钉钉" checked={dingtalk} onChange={setDingtalk} />
       </div>
       <div className="task-editor-footer">
@@ -686,16 +720,25 @@ function overdueText(iso: string): string {
 
 function metaText(task: Task): string {
   const parts: string[] = []
-  if (task.repeat_rule !== 'none') parts.push(REPEAT_LABELS[task.repeat_rule])
+  const horizon = task.horizon ?? 'timed'
+  if (horizon === 'timed') {
+    if (task.repeat_rule !== 'none') parts.push(REPEAT_LABELS[task.repeat_rule])
+  } else if (HORIZON_LABELS[horizon]) {
+    parts.push(HORIZON_LABELS[horizon])
+  }
   if (task.status === 'done') {
     if (task.completed_at) {
-      const minutes = Math.floor(
-        (new Date(task.due_at).getTime() - new Date(task.completed_at).getTime()) / 60000,
-      )
-      const tail = minutes > 0
-        ? `提前 ${minutes} 分钟`
-        : minutes < 0 ? `晚 ${Math.abs(minutes)} 分钟` : '准点'
-      parts.push(`${formatClock(task.completed_at)} 完成，${tail}`)
+      if (task.due_at) {
+        const minutes = Math.floor(
+          (new Date(task.due_at).getTime() - new Date(task.completed_at).getTime()) / 60000,
+        )
+        const tail = minutes > 0
+          ? `提前 ${minutes} 分钟`
+          : minutes < 0 ? `晚 ${Math.abs(minutes)} 分钟` : '准点'
+        parts.push(`${formatClock(task.completed_at)} 完成，${tail}`)
+      } else {
+        parts.push(`${formatClock(task.completed_at)} 完成`)
+      }
     }
   } else if (task.early_notified_at) {
     parts.push('提前 10 分钟提醒')
@@ -705,14 +748,22 @@ function metaText(task: Task): string {
     parts.push(`已提醒 ${task.remind_count} 次`)
   }
   if (task.source === 'chat' || task.source === 'draft') {
-    parts.push(`由对话创建 ${formatClock(task.created_at || task.due_at)}`)
+    const stamp = task.created_at || task.due_at
+    if (stamp) parts.push(`由对话创建 ${formatClock(stamp)}`)
   }
   const note = task.note.trim()
   if (note) parts.push(`备注：${note}`)
   return parts.join(' · ')
 }
 
-function formatClock(iso: string): string {
+function horizonHint(horizon: Horizon): string {
+  if (horizon === 'week') return '本周内完成：周五 17:00 提醒你，周日结束前完成即可。'
+  if (horizon === 'month') return '本月内完成：最后一个工作日下午 5 点提醒你，月末前完成即可。'
+  return '放入待安排：没有时间压力，每周五下午会提醒你回顾整理。'
+}
+
+function formatClock(iso: string | null | undefined): string {
+  if (!iso) return ''
   const date = new Date(iso)
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }

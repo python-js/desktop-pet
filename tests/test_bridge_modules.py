@@ -466,6 +466,19 @@ class TasksModuleTests(BridgeModuleTestsBase):
         resp = self.invoke('tasks.edit', {'id': task['id'], 'repeat': 'yearly'})
         self.assertEqual(resp['error']['code'], 'VALIDATION_ERROR')
 
+    def test_add_and_edit_bucket_tasks(self):
+        week = self.invoke('tasks.add', {'title': '周报', 'horizon': 'week'})['data']
+        self.assertEqual((week['horizon'], week['repeat_rule']), ('week', 'none'))
+        self.assertIsNotNone(week['remind_at'])
+        someday = self.invoke('tasks.add', {'title': '整理书架', 'horizon': 'someday'})['data']
+        self.assertEqual((someday['due_at'], someday['remind_at']), (None, None))
+        resp = self.invoke('tasks.edit', {'id': week['id'], 'title': '周报', 'horizon': 'someday'})
+        self.assertTrue(resp['ok'], resp)
+        self.assertEqual(resp['data']['horizon'], 'someday')
+        self.assertIsNone(resp['data']['due_at'])
+        self.assertEqual(self.invoke('tasks.add', {'title': 'x', 'horizon': 'year'})['error']['code'],
+                         'VALIDATION_ERROR')
+
     def test_edit_on_overdue_requires_new_time(self):
         now = utc_now()
         tid = self.window.store.add('旧任务', (now - timedelta(minutes=1)).isoformat(),

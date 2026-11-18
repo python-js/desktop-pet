@@ -4,7 +4,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from urllib.parse import urlsplit
 from .recurrence import validate_repeat, next_occurrence
 
@@ -22,6 +22,8 @@ DEFAULT_DND_START = '22:30'
 DEFAULT_DND_END = '07:30'
 EARLY_NUDGE_MINUTES = 10
 CLOCK = re.compile(r'([01]?\d|2[0-3]):([0-5]\d)')
+HORIZONS = ('timed', 'week', 'month', 'someday')
+HORIZON_LABELS = {'timed': '', 'week': '本周内完成', 'month': '本月内完成', 'someday': '待安排'}
 
 
 def parse_clock(value):
@@ -61,6 +63,37 @@ def local_week_start(now):
                             tzinfo=local.tzinfo).astimezone(timezone.utc)
 
 
+def validate_horizon(value):
+    if value not in HORIZONS:
+        raise ValueError('不支持的任务期限')
+    return value
+
+
+def horizon_deadline(horizon, now):
+    """Week ends Sunday 23:59:59, month ends its last day; reminder lands Friday/last weekday 17:00.
+
+    A reminder already past at creation time returns None so new buckets stay silent
+    until their next period.
+    """
+    validate_horizon(horizon)
+    if horizon not in ('week', 'month'):
+        return None, None
+    local = now.astimezone()
+    day = local.date()
+    if horizon == 'week':
+        deadline = day + timedelta(days=6 - day.weekday())
+        remind_day = day + timedelta(days=4 - day.weekday())
+    else:
+        deadline = (day.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        remind_day = deadline
+        while remind_day.weekday() >= 5:
+            remind_day -= timedelta(days=1)
+    due = datetime.combine(deadline, time(23, 59, 59), tzinfo=local.tzinfo)
+    remind = datetime.combine(remind_day, time(17, 0), tzinfo=local.tzinfo)
+    # 存 UTC，due()/early_due() 按 ISO 字符串比较大小，混用本地偏移会误判。
+    return due.astimezone(timezone.utc), (remind.astimezone(timezone.utc) if remind > now else None)
+
+
 def parse_due(value):
     if not isinstance(value, str):
         raise ValueError('提醒时间必须为带时区的 ISO 日期时间')
@@ -73,13 +106,20 @@ def parse_due(value):
     return result.astimezone(timezone.utc)
 
 
-def validate_task(title, due, now=None):
+def validate_title(title):
     if not isinstance(title, str) or not title.strip() or len(title.strip()) > 200:
         raise ValueError('任务标题需要 1–200 个字符')
+    return title.strip()
+
+
+def validate_task(title, due, now=None):
+    title = validate_title(title)
+    if due is None:
+        raise ValueError('请选择未来的提醒时间')
     value = parse_due(due)
     if value <= (now or utc_now()):
         raise ValueError('请选择未来的提醒时间')
-    return title.strip(), value.isoformat()
+    return title, value.isoformat()
 
 
 DUE_TEXT_RULES = (
@@ -183,10 +223,15 @@ def _decode_tasks(suggestions):
                 raise ValueError('任务建议必须为对象')
             action = item.get('action', 'create')
             if action == 'create':
-                title, due = validate_task(item.get('title'), item.get('due_at'))
-                repeat = validate_repeat(item.get('repeat', 'none'))
+                horizon = validate_horizon(item.get('horizon') or 'timed')
+                if horizon == 'timed':
+                    validate_task(item.get('title'), item.get('due_at'))
+                    title, due = _task_title(item.get('title')), item['due_at']
+                    repeat = validate_repeat(item.get('repeat', 'none'))
+                else:
+                    title, due, repeat = validate_title(item.get('title')), None, 'none'
                 # Preserve the proposed wall-clock UTC offset for future occurrences.
-                tasks.append({'title': title, 'due_at': item['due_at'], 'repeat': repeat,
+                tasks.append({'title': title, 'due_at': due, 'repeat': repeat, 'horizon': horizon,
                               'dingtalk': item.get('dingtalk') is True})
             elif action in TASK_ACTIONS:
                 task = {'action': action, 'id': _task_id(item.get('id'))}
@@ -194,6 +239,9 @@ def _decode_tasks(suggestions):
                     fields = 0
                     if 'title' in item:
                         task['title'] = _task_title(item['title'])
+                        fields += 1
+                    if 'horizon' in item:
+                        task['horizon'] = validate_horizon(item['horizon'])
                         fields += 1
                     if 'due_at' in item:
                         parse_due(item['due_at'])
@@ -276,27 +324,34 @@ def decode_response(content):
     return payload['reply'], tasks, errors
 
 
+TASK_TABLE_COLUMNS = '''
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, due_at TEXT,
+  status TEXT NOT NULL DEFAULT 'pending', notified_at TEXT,
+  created_at TEXT NOT NULL, dingtalk INTEGER NOT NULL DEFAULT 0,
+  remind_count INTEGER NOT NULL DEFAULT 0, deferred INTEGER NOT NULL DEFAULT 0,
+  repeat_rule TEXT NOT NULL DEFAULT 'none', scheduled_at TEXT, next_id TEXT,
+  completed_at TEXT, source TEXT NOT NULL DEFAULT 'manual',
+  note TEXT NOT NULL DEFAULT '', muted_until TEXT, early_notified_at TEXT,
+  horizon TEXT NOT NULL DEFAULT 'timed', remind_at TEXT'''
+
+
 class TaskStore:
     def __init__(self, path):
         self.path = str(path)
         self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
         version = self.db.execute('PRAGMA user_version').fetchone()[0]
-        if version > 7:
+        if version > 8:
             self.db.close()
             raise ValueError('数据库来自较新版本，请升级应用')
-        if version in (1, 2, 3, 4, 5, 6) and self.path != ':memory:':
+        if version in (1, 2, 3, 4, 5, 6, 7) and self.path != ':memory:':
             # SQLite backup includes committed WAL data and never overwrites a previous backup.
             backup_path = Path(str(path) + f'.v{version}-' + uuid.uuid4().hex + '.bak')
             with closing(sqlite3.connect(str(backup_path))) as backup:
                 self.db.backup(backup)
-        self.db.executescript('''
+        self.db.executescript(f'''
             BEGIN;
-            CREATE TABLE IF NOT EXISTS tasks (
-              id TEXT PRIMARY KEY, title TEXT NOT NULL, due_at TEXT NOT NULL,
-              status TEXT NOT NULL DEFAULT 'pending', notified_at TEXT,
-              created_at TEXT NOT NULL, dingtalk INTEGER NOT NULL DEFAULT 0,
-              remind_count INTEGER NOT NULL DEFAULT 0, deferred INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS tasks ({TASK_TABLE_COLUMNS});
             CREATE INDEX IF NOT EXISTS tasks_due ON tasks(status, due_at);
             CREATE TABLE IF NOT EXISTS messages (
               id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL,
@@ -324,6 +379,22 @@ class TaskStore:
                                       ('early_notified_at', 'TEXT')):
                 if name not in task_columns:
                     self.db.execute(f'ALTER TABLE tasks ADD COLUMN {name} {declaration}')
+            if 'horizon' not in task_columns:
+                self.db.execute("ALTER TABLE tasks ADD COLUMN horizon TEXT NOT NULL DEFAULT 'timed'")
+            if 'remind_at' not in task_columns:
+                self.db.execute('ALTER TABLE tasks ADD COLUMN remind_at TEXT')
+                self.db.execute('UPDATE tasks SET remind_at=due_at')
+            # 旧表的 due_at 带 NOT NULL；重建一次以便待安排任务可以没有截止时间。
+            columns = list(self.db.execute('PRAGMA table_info(tasks)'))
+            if any(row['name'] == 'due_at' and row['notnull'] for row in columns):
+                names = ', '.join(row['name'] for row in columns)
+                self.db.execute('DROP TABLE IF EXISTS tasks_migrate')
+                self.db.execute(f'CREATE TABLE tasks_migrate ({TASK_TABLE_COLUMNS})')
+                self.db.execute(f'INSERT INTO tasks_migrate({names}) SELECT {names} FROM tasks')
+                self.db.execute('DROP TABLE tasks')
+                self.db.execute('ALTER TABLE tasks_migrate RENAME TO tasks')
+            self.db.execute('CREATE INDEX IF NOT EXISTS tasks_due ON tasks(status, due_at)')
+            self.db.execute('CREATE INDEX IF NOT EXISTS tasks_remind ON tasks(status, remind_at)')
             draft_columns = {row['name'] for row in self.db.execute('PRAGMA table_info(drafts)')}
             if 'repeat_rule' not in draft_columns:
                 self.db.execute("ALTER TABLE drafts ADD COLUMN repeat_rule TEXT NOT NULL DEFAULT 'none'")
@@ -335,7 +406,7 @@ class TaskStore:
             self.db.execute('CREATE INDEX IF NOT EXISTS task_events_at ON task_events(kind, at)')
             self.db.execute('CREATE INDEX IF NOT EXISTS task_events_task ON task_events(task_id, at)')
             self.db.execute('UPDATE tasks SET scheduled_at=due_at WHERE scheduled_at IS NULL')
-            self.db.execute('PRAGMA user_version=7')
+            self.db.execute('PRAGMA user_version=8')
             self.db.commit()
         except Exception:
             self.db.rollback()
@@ -392,17 +463,29 @@ class TaskStore:
         with self.db:
             self.db.execute('UPDATE sessions SET input_text=? WHERE id=?', (text, session_id))
 
-    def add(self, title, due, now=None, repeat='none', dingtalk=False, source='manual', note=''):
-        scheduled_at = due
-        title, due = validate_task(title, due, now)
+    def add(self, title, due=None, now=None, repeat='none', dingtalk=False, source='manual', note='',
+            horizon='timed'):
+        validate_horizon(horizon)
+        created = now or utc_now()
+        title = validate_title(title)
+        if horizon == 'timed':
+            title, due = validate_task(title, due, created)
+            remind_at = due
+        elif horizon == 'someday':
+            due = remind_at = None
+            repeat = 'none'
+        else:
+            deadline, remind = horizon_deadline(horizon, created)
+            due = deadline.isoformat()
+            remind_at = remind.isoformat() if remind else None
+            repeat = 'none'
         validate_repeat(repeat)
         task_id = uuid.uuid4().hex
-        created = now or utc_now()
         source = source if source in ('manual', 'chat', 'draft') else 'manual'
         with self.db:
-            self.db.execute('INSERT INTO tasks(id,title,due_at,created_at,repeat_rule,scheduled_at,dingtalk,source,note) VALUES(?,?,?,?,?,?,?,?,?)',
-                            (task_id, title, due, created.isoformat(), repeat, scheduled_at, int(bool(dingtalk)),
-                             source, str(note or '')[:1000]))
+            self.db.execute('INSERT INTO tasks(id,title,due_at,created_at,repeat_rule,scheduled_at,dingtalk,source,note,horizon,remind_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                            (task_id, title, due, created.isoformat(), repeat, due, int(bool(dingtalk)),
+                             source, str(note or '')[:1000], horizon, remind_at))
             self._record(task_id, 'created', created, source)
         return task_id
 
@@ -412,13 +495,17 @@ class TaskStore:
                             (int(bool(enabled)), task_id))
 
     def pending(self):
-        return self.db.execute("SELECT * FROM tasks WHERE status='pending' ORDER BY due_at").fetchall()
+        return self.db.execute("SELECT * FROM tasks WHERE status='pending' ORDER BY due_at IS NULL, due_at").fetchall()
+
+    def inbox_count(self):
+        return self.db.execute("SELECT COUNT(*) FROM tasks WHERE status='pending' AND horizon='someday'").fetchone()[0]
 
     def history(self, status='done', search=''):
         if status not in ('pending', 'done'):
             raise ValueError('不支持的任务状态')
         # instr treats user-entered % and _ as literal characters.
-        return self.db.execute('SELECT * FROM tasks WHERE status=? AND instr(lower(title),lower(?))>0 ORDER BY due_at',
+        return self.db.execute('SELECT * FROM tasks WHERE status=? AND instr(lower(title),lower(?))>0 '
+                               'ORDER BY due_at IS NULL, due_at',
                                (status, search.strip())).fetchall()
 
     def reopen(self, task_id, now=None):
@@ -484,18 +571,21 @@ class TaskStore:
         return task_id
 
     def due(self, now=None):
+        """Tasks whose reminder moment (due time or bucket reminder) has arrived."""
         now = (now or utc_now()).astimezone(timezone.utc)
         today = now.astimezone().date().isoformat()
         return self.db.execute("SELECT * FROM tasks WHERE status='pending' AND deferred=0 AND notified_at IS NULL "
-                               "AND (muted_until IS NULL OR muted_until<?) AND due_at<=? ORDER BY due_at LIMIT 20",
+                               "AND (muted_until IS NULL OR muted_until<?) "
+                               "AND remind_at IS NOT NULL AND remind_at<=? ORDER BY remind_at LIMIT 20",
                                (today, now.isoformat())).fetchall()
 
     def early_due(self, now=None, minutes=EARLY_NUDGE_MINUTES):
-        """Future tasks inside the nudge window that have not been nudged yet."""
+        """Timed tasks inside the nudge window that have not been nudged yet."""
         now = (now or utc_now()).astimezone(timezone.utc)
         today = now.astimezone().date().isoformat()
         return self.db.execute("SELECT * FROM tasks WHERE status='pending' AND deferred=0 AND early_notified_at IS NULL "
-                               "AND (muted_until IS NULL OR muted_until<?) AND due_at>? AND due_at<=? ORDER BY due_at LIMIT 20",
+                               "AND horizon='timed' AND (muted_until IS NULL OR muted_until<?) "
+                               "AND remind_at>? AND remind_at<=? ORDER BY remind_at LIMIT 20",
                                (today, now.isoformat(), (now + timedelta(minutes=minutes)).isoformat())).fetchall()
 
     def mark_early_shown(self, task_id, now=None):
@@ -551,40 +641,59 @@ class TaskStore:
                                       (utc_stamp(now), task_id)).rowcount
             if not changed:
                 return None
-            self._record(task_id, 'completed', now, 'on_time' if now <= parse_due(row['due_at']) else 'late')
+            # 待安排没有截止时间，完成后总是记为按时。
+            on_time = not row['due_at'] or now <= parse_due(row['due_at'])
+            self._record(task_id, 'completed', now, 'on_time' if on_time else 'late')
             scheduled = next_occurrence(row['scheduled_at'], row['repeat_rule'], now)
             if scheduled is None:
                 return None
             next_id = uuid.uuid4().hex
-            self.db.execute('INSERT INTO tasks(id,title,due_at,created_at,repeat_rule,scheduled_at,dingtalk,source,note) VALUES(?,?,?,?,?,?,?,?,?)',
-                            (next_id, row['title'], scheduled.astimezone(timezone.utc).isoformat(), now.isoformat(),
-                             row['repeat_rule'], scheduled.isoformat(), row['dingtalk'], row['source'], row['note']))
+            due = scheduled.astimezone(timezone.utc).isoformat()
+            self.db.execute('INSERT INTO tasks(id,title,due_at,created_at,repeat_rule,scheduled_at,dingtalk,source,note,horizon,remind_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                            (next_id, row['title'], due, now.isoformat(), row['repeat_rule'], scheduled.isoformat(),
+                             row['dingtalk'], row['source'], row['note'], 'timed', due))
             self._record(next_id, 'created', now, 'repeat')
             self.db.execute('UPDATE tasks SET next_id=? WHERE id=?', (next_id, task_id))
             return next_id
 
-    def edit(self, task_id, title, due, now=None, repeat=None, dingtalk=None):
-        scheduled_at = due
-        title, due = validate_task(title, due, now)
-        row = self.db.execute('SELECT repeat_rule,due_at,scheduled_at,dingtalk FROM tasks WHERE id=?', (task_id,)).fetchone()
-        repeat = validate_repeat(repeat if repeat is not None else (row['repeat_rule'] if row else 'none'))
-        dingtalk = int(bool(row['dingtalk'] if dingtalk is None and row else dingtalk))
-        if row and due == row['due_at'] and repeat == row['repeat_rule']:
-            scheduled_at = row['scheduled_at']
+    def edit(self, task_id, title, due=None, now=None, repeat=None, dingtalk=None, horizon=None):
+        row = self.db.execute('SELECT * FROM tasks WHERE id=?', (task_id,)).fetchone()
         now = now or utc_now()
+        horizon = validate_horizon(horizon if horizon is not None else (row['horizon'] if row else 'timed'))
+        title = validate_title(title)
+        repeat = 'none' if horizon != 'timed' else validate_repeat(
+            repeat if repeat is not None else (row['repeat_rule'] if row else 'none'))
+        if horizon == 'timed':
+            title, due = validate_task(title, due, now)
+            remind_at = due
+            scheduled_at = due
+            if row and due == row['due_at'] and repeat == row['repeat_rule'] and row['horizon'] == 'timed':
+                scheduled_at = row['scheduled_at']
+        elif horizon == 'someday':
+            due = remind_at = scheduled_at = None
+        else:
+            deadline, remind = horizon_deadline(horizon, now)
+            due = deadline.isoformat()
+            remind_at = remind.isoformat() if remind else None
+            scheduled_at = due
+        dingtalk = int(bool(row['dingtalk'] if dingtalk is None and row else dingtalk))
         with self.db:
-            changed = self.db.execute("UPDATE tasks SET title=?,due_at=?,scheduled_at=?,repeat_rule=?,dingtalk=?,notified_at=NULL,"
+            changed = self.db.execute("UPDATE tasks SET title=?,due_at=?,scheduled_at=?,repeat_rule=?,dingtalk=?,"
+                                      "horizon=?,remind_at=?,notified_at=NULL,"
                                       "remind_count=0,deferred=0,early_notified_at=NULL,muted_until=NULL WHERE id=? AND status='pending'",
-                                      (title, due, scheduled_at, repeat, dingtalk, task_id)).rowcount
+                                      (title, due, scheduled_at, repeat, dingtalk, horizon, remind_at, task_id)).rowcount
             if changed:
                 self._record(task_id, 'edited', now)
 
     def snooze(self, task_id, now=None, minutes=10, auto=False):
         now = (now or utc_now()).astimezone(timezone.utc)
+        later = (now + timedelta(minutes=minutes)).isoformat()
         with self.db:
-            changed = self.db.execute("UPDATE tasks SET due_at=?,notified_at=NULL,early_notified_at=? "
-                                      "WHERE id=? AND status='pending' AND deferred=0",
-                                      ((now + timedelta(minutes=minutes)).isoformat(), now.isoformat(), task_id)).rowcount
+            # 本周/本月任务顺延的是提醒，不改截止日；待安排没有提醒可顺延。
+            changed = self.db.execute("UPDATE tasks SET due_at=CASE WHEN horizon='timed' THEN ? ELSE due_at END,"
+                                      "remind_at=?,notified_at=NULL,early_notified_at=? "
+                                      "WHERE id=? AND status='pending' AND deferred=0 AND horizon!='someday'",
+                                      (later, later, now.isoformat(), task_id)).rowcount
             if changed:
                 self._record(task_id, 'auto_postponed' if auto else 'snoozed', now, str(minutes))
 
@@ -638,14 +747,15 @@ class TaskStore:
         start, end = local_day_bounds(now)
         rows = self.db.execute('SELECT due_at,completed_at FROM tasks WHERE status=\'done\' AND completed_at>=? AND completed_at<?',
                                (start.isoformat(), end.isoformat())).fetchall()
-        on_time = sum(1 for row in rows if parse_due(row['completed_at']) <= parse_due(row['due_at']))
+        on_time = sum(1 for row in rows
+                      if not row['due_at'] or parse_due(row['completed_at']) <= parse_due(row['due_at']))
         reminders = self.db.execute("SELECT COUNT(*) FROM task_events WHERE kind IN ('reminded','quiet') AND at>=? AND at<?",
                                     (start.isoformat(), end.isoformat())).fetchone()[0]
         week_start = local_week_start(now)
         week_days = set()
         for row in self.db.execute('SELECT due_at,completed_at FROM tasks WHERE status=\'done\' AND completed_at>=? AND completed_at<=?',
                                    (week_start.isoformat(), utc_stamp(now))):
-            if parse_due(row['completed_at']) <= parse_due(row['due_at']):
+            if not row['due_at'] or parse_due(row['completed_at']) <= parse_due(row['due_at']):
                 week_days.add(parse_due(row['completed_at']).astimezone().date())
         return {
             'completed_today': len(rows),
@@ -675,7 +785,7 @@ class TaskStore:
 
     def export_data(self, path):
         """Database-only export; settings and secret stores are intentionally out of scope."""
-        payload = {'format': 'desktop-pet-export', 'version': 7, 'exported_at': utc_now().isoformat()}
+        payload = {'format': 'desktop-pet-export', 'version': 8, 'exported_at': utc_now().isoformat()}
         for table in ('tasks', 'task_events', 'sessions', 'messages', 'drafts'):
             payload[table] = [dict(row) for row in self.db.execute(f'SELECT * FROM {table}')]
         Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')

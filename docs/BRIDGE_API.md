@@ -90,8 +90,8 @@ bridge.event(name: string, payload: string)     // 前端 bridge.on(name, cb) �
 |---|---|---|---|
 | `tasks.list` | `{}` | `Task[]`(pending) | `pending` |
 | `tasks.history` | `{status='done', search?}` | `Task[]` | `history` |
-| `tasks.add` | `{title, dueAt, repeat?, dingtalk?, note?}` | `Task` | `add`(校验 `validate_task`) |
-| `tasks.edit` | `{id, title, dueAt, repeat?, dingtalk?}` | `Task` | `edit`;已逾期任务必须同时给出新的 `dueAt` |
+| `tasks.add` | `{title, horizon?='timed', dueAt?, repeat?, dingtalk?, note?}` | `Task` | `add`;`timed` 必须给未来 `dueAt`,`week`/`month`/`someday` 忽略 `dueAt` |
+| `tasks.edit` | `{id, title?, horizon?, dueAt?, repeat?, dingtalk?}` | `Task` | `edit`;已逾期的 `timed` 任务必须同时给出新的 `dueAt` |
 | `tasks.complete` | `{id}` | `{nextId: string \| null}`(重复任务返回新实例) | `complete` |
 | `tasks.reopen` | `{id}` | `{}` | `reopen`;已生成下一次的重复任务返回 `CONFLICT` |
 | `tasks.delete` | `{id}` | `{}` | `delete` |
@@ -105,6 +105,8 @@ bridge.event(name: string, payload: string)     // 前端 bridge.on(name, cb) �
 | `tasks.dismissReminder` | `{id, postpone=true}` | `{postponed: boolean}` | `close_web_reminder`;`postpone` 且开启自动顺延时顺延 10 分钟 |
 
 `repeat` 取值:`none | daily | weekdays | weekly`;`status`:`pending | done | deleted_pending | deleted_done`。Task 字段即 tasks 表行(见 core.py 建表语句)。所有写方法成功后都发 `tasks.changed`,前端据此重拉列表。
+
+`horizon` 取值:`timed`(定时提醒,`due_at` 即提醒时刻)、`week`(本周日 23:59 截止,周五 17:00 提醒)、`month`(月末截止,最后一个工作日 17:00 提醒)、`someday`(待安排收集箱,无 `due_at`/`remind_at`,不计逾期)。`week`/`month`/`someday` 的 `repeat` 固定为 `none`;提醒时刻已过则不补发。
 
 ### 4.2 chat — 会话、消息与助手(bridge_modules/chat.py)
 

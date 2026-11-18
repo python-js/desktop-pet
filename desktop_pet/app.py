@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QMessageBox, QSy
 
 from .assistant import ask, plain_text, RequestCancelled
 from .bridge import BridgeHost
-from .core import (REMIND_LIMIT, TaskStore, decode_response, in_quiet_hours,
+from .core import (HORIZON_LABELS, REMIND_LIMIT, TaskStore, decode_response, in_quiet_hours,
                    local_day_bounds, parse_due, utc_now)
 from .platforms import data_directory, notify
 from . import dingtalk, knowledge, websearch
@@ -26,6 +26,14 @@ from .ui.theme import apply_theme, application_icon
 
 def task_title_key(value):
     return ' '.join(str(value).split()).casefold()
+
+
+def due_text(value):
+    return local_time(value) if value else '待安排'
+
+
+def horizon_label(task):
+    return HORIZON_LABELS.get(task['horizon'] if 'horizon' in task.keys() else 'timed', '')
 
 
 SELECTION = re.compile(r'\s*(?:第\s*)?([0-9]{1,2}|[一二三四五六七八九十])\s*(?:个|条|项)?\s*[.。]?\s*')
@@ -209,9 +217,9 @@ class MainWindow(ShellMixin, QMainWindow):
         verbs = {'update': '修改', 'complete': '完成', 'delete': '删除'}
         lines = [f'找到 {len(rows)} 条「{rows[0]["title"]}」，请选择要{verbs[op["action"]]}的那条：', '']
         for index, row in enumerate(rows, 1):
-            overdue = '已逾期 · ' if parse_due(row['due_at']) <= utc_now() else ''
-            repeat = REPEAT_LABELS.get(row['repeat_rule'], '不重复')
-            lines.append(f'{index}. {overdue}{local_time(row["due_at"])} · {repeat}')
+            overdue = '已逾期 · ' if row['due_at'] and parse_due(row['due_at']) <= utc_now() else ''
+            repeat = horizon_label(row) or REPEAT_LABELS.get(row['repeat_rule'], '不重复')
+            lines.append(f'{index}. {overdue}{due_text(row["due_at"])} · {repeat}')
         lines.extend(['', '回复序号即可，回复其他内容将取消本次操作。'])
         return {'op': {key: value for key, value in op.items() if key != 'id'},
                 'ids': [row['id'] for row in rows], 'prompt': '\n'.join(lines)}
@@ -221,17 +229,24 @@ class MainWindow(ShellMixin, QMainWindow):
         action = op.get('action', 'create')
         pending = self.store.pending()
         if action == 'create':
-            repeat = op.get('repeat', 'none')
+            horizon = op.get('horizon', 'timed')
+            repeat = op.get('repeat', 'none') if horizon == 'timed' else 'none'
             dingtalk_flag = bool(op.get('dingtalk'))
             existing = next((row for row in pending
                              if row['title'] == op['title'].strip()
-                             and parse_due(row['due_at']) == parse_due(op['due_at'])
-                             and row['repeat_rule'] == repeat), None)
+                             and row['horizon'] == horizon
+                             and (horizon != 'timed'
+                                  or (row['due_at'] and op.get('due_at')
+                                      and parse_due(row['due_at']) == parse_due(op['due_at'])
+                                      and row['repeat_rule'] == repeat))), None)
             if existing is None:
-                self.store.add(op['title'], op['due_at'], repeat=repeat, dingtalk=dingtalk_flag, source='chat')
+                self.store.add(op['title'], op.get('due_at'), repeat=repeat, dingtalk=dingtalk_flag,
+                               source='chat', horizon=horizon)
             elif dingtalk_flag and not existing['dingtalk']:
                 self.store.set_dingtalk(existing['id'], True)
             prefix = '已有待办：' if existing else '已保存：'
+            if horizon != 'timed':
+                return f"{prefix}{op['title']}，{HORIZON_LABELS[horizon]}。", None
             channel = ''
             if dingtalk_flag:
                 channel = ('，到期后推送到钉钉群' if self.dingtalk_webhook
@@ -254,20 +269,23 @@ class MainWindow(ShellMixin, QMainWindow):
         action = op['action']
         if action == 'update':
             title = op.get('title', row['title'])
+            horizon = op.get('horizon', row['horizon'])
             due = op.get('due_at', row['due_at'])
-            repeat = op.get('repeat', row['repeat_rule'])
+            repeat = op.get('repeat', row['repeat_rule']) if horizon == 'timed' else 'none'
             dingtalk = op.get('dingtalk', bool(row['dingtalk']))
-            if 'due_at' not in op and parse_due(row['due_at']) <= utc_now():
+            if (horizon == 'timed' and 'due_at' not in op and row['due_at']
+                    and parse_due(row['due_at']) <= utc_now()):
                 raise ValueError('该待办已逾期，请同时给出新的提醒时间')
-            self.store.edit(row['id'], title, due, repeat=repeat, dingtalk=dingtalk)
+            self.store.edit(row['id'], title, due, repeat=repeat, dingtalk=dingtalk, horizon=horizon)
             self.dismiss_reminder(row['id'])
+            after = dict(self.store.db.execute('SELECT * FROM tasks WHERE id=?', (row['id'],)).fetchone())
             changes = []
             if title != row['title']:
                 changes.append(f'标题「{row["title"]}」→「{title}」')
-            if parse_due(due) != parse_due(row['due_at']):
-                changes.append(f'时间 {local_time(row["due_at"])} → {local_time(due)}')
-            if repeat != row['repeat_rule']:
-                changes.append(f'重复 {REPEAT_LABELS[row["repeat_rule"]]} → {REPEAT_LABELS[repeat]}')
+            if (after['due_at'], after['horizon']) != (row['due_at'], row['horizon']):
+                changes.append(f'时间 {due_text(row["due_at"])} → {due_text(after["due_at"])}')
+            if after['repeat_rule'] != row['repeat_rule']:
+                changes.append(f'重复 {REPEAT_LABELS[row["repeat_rule"]]} → {REPEAT_LABELS[after["repeat_rule"]]}')
             if bool(dingtalk) != bool(row['dingtalk']):
                 changes.append('钉钉通知已开启' if dingtalk else '钉钉通知已关闭')
             return '已修改：' + ('；'.join(changes) + '。' if changes
@@ -325,8 +343,8 @@ class MainWindow(ShellMixin, QMainWindow):
         """Pin a due-task card just above the pet's head."""
         if not self.pet.isVisible():
             return
-        popup = ReminderPopup(task, local_time(task['due_at']),
-                              REPEAT_LABELS.get(task['repeat_rule'], '不重复'), self.pet)
+        label = horizon_label(task) or REPEAT_LABELS.get(task['repeat_rule'], '不重复')
+        popup = ReminderPopup(task, due_text(task['due_at']), label, self.pet)
         popup.action.connect(self.resolve_reminder)
         self.reminder_popups[task['id']] = popup
         self.restack_reminders()
@@ -381,6 +399,25 @@ class MainWindow(ShellMixin, QMainWindow):
         quiet = self.quiet_reason(now)
         self.check_due_web(current, quiet, now)
         self.check_early(now, current, quiet)
+        self.check_inbox_review(now, quiet)
+
+    def check_inbox_review(self, now, quiet=''):
+        """周五 17:00 后提醒一次回顾待安排收集箱。"""
+        if quiet or now.weekday() != 4 or now.hour < 17:
+            return
+        today = now.date().isoformat()
+        if self.settings.get('last_inbox_review') == today:
+            return
+        count = self.store.inbox_count()
+        if not count:
+            return
+        self.settings['last_inbox_review'] = today
+        try:
+            self.persist_settings()
+        except OSError:
+            pass
+        self.pet.say(f'待安排里还有 {count} 项，要不要整理一下？')
+        self.bridge.emit_event('inbox.review', {'count': count})
 
     def announce_due(self, task, final):
         self.pet.play_action('reminder')

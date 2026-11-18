@@ -1,5 +1,21 @@
 // Display helpers shared by the home/tasks pages; bridge payloads stay snake_case.
-import { RepeatRule, Task } from './api'
+import { Horizon, RepeatRule, Task } from './api'
+
+export type TimedTask = Task & { due_at: string }
+
+export const HORIZON_OPTIONS: { key: Horizon; label: string }[] = [
+  { key: 'timed', label: '定时' },
+  { key: 'week', label: '本周' },
+  { key: 'month', label: '本月' },
+  { key: 'someday', label: '待安排' },
+]
+
+export const HORIZON_LABELS: Record<Horizon, string> = {
+  timed: '',
+  week: '本周内完成',
+  month: '本月内完成',
+  someday: '待安排',
+}
 
 export const REPEAT_OPTIONS: { key: RepeatRule; label: string }[] = [
   { key: 'none', label: '不重复' },
@@ -51,7 +67,8 @@ export function defaultDueInput(): string {
   return toLocalInput(date.toISOString())
 }
 
-export function formatDue(iso: string): string {
+export function formatDue(iso: string | null | undefined): string {
+  if (!iso) return HORIZON_LABELS.someday
   const date = new Date(iso)
   const days = Math.round((startOfDay(date) - startOfDay(new Date())) / 86400000)
   const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`
@@ -62,15 +79,21 @@ export function formatDue(iso: string): string {
   return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
 }
 
-export function formatClock(iso: string): string {
+export function formatClock(iso: string | null | undefined): string {
+  if (!iso) return ''
   const date = new Date(iso)
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+export function isTimed(task: Task): task is TimedTask {
+  return (!task.horizon || task.horizon === 'timed') && Boolean(task.due_at)
+}
+
 export function isOverdue(task: Task): boolean {
-  return task.status === 'pending' && new Date(task.due_at).getTime() < Date.now()
+  return task.status === 'pending' && task.horizon !== 'someday'
+    && Boolean(task.due_at) && new Date(task.due_at as string).getTime() < Date.now()
 }
 
 export function isToday(task: Task): boolean {
-  return startOfDay(new Date(task.due_at)) === startOfDay(new Date())
+  return Boolean(task.due_at) && startOfDay(new Date(task.due_at as string)) === startOfDay(new Date())
 }

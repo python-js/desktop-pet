@@ -114,7 +114,7 @@ class CoreTests(unittest.TestCase):
         reply, tasks, errors = decode_response(content)
         self.assertEqual(reply, '先用 **FTS5** 建索引：\n\n- 收集文档\n- 建表')
         self.assertEqual(tasks, [{'title': '整理文档', 'due_at': '2099-01-01T12:00:00+08:00',
-                                  'repeat': 'daily', 'dingtalk': False}])
+                                  'repeat': 'daily', 'horizon': 'timed', 'dingtalk': False}])
         self.assertEqual(errors, [])
         self.assertEqual(decode_response('# 标题\n\n正文'), ('# 标题\n\n正文', [], []))
         reply, tasks, errors = decode_response('正文\n\n```tasks\n[oops]\n```')
@@ -282,7 +282,7 @@ class CoreTests(unittest.TestCase):
         self.store.db.commit()
         self.store.close()
         self.store = TaskStore(self.path)
-        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0], 7)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0], 8)
         self.assertEqual(self.store.pending()[0]['id'], tid)
         self.assertEqual(self.store.pending()[0]['dingtalk'], 0)
         self.assertEqual(self.store.pending()[0]['remind_count'], 0)
@@ -357,7 +357,7 @@ class CoreTests(unittest.TestCase):
         old.close()
         upgraded = TaskStore(old_path)
         try:
-            self.assertEqual(upgraded.db.execute('PRAGMA user_version').fetchone()[0], 7)
+            self.assertEqual(upgraded.db.execute('PRAGMA user_version').fetchone()[0], 8)
             row = upgraded.pending()[0]
             self.assertEqual(row['id'], 'legacy')
             self.assertIsNone(row['completed_at'])

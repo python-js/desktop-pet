@@ -142,15 +142,26 @@ def task_snapshot(tasks):
         return '当前没有未完成待办；不要输出 update、complete 或 delete 操作。'
     now = datetime.now().astimezone()
     lines = ['当前未完成待办（修改、完成、删除时只能使用下列 id，逐字复制）：',
-             'id | 标题 | 到期（本地时间） | 重复 | 状态']
+             'id | 标题 | 期限（本地时间） | 重复 | 状态']
     for task in tasks[:50]:
-        due = parse_due(task['due_at']).astimezone()
+        horizon = task.get('horizon', 'timed')
+        due = parse_due(task['due_at']).astimezone() if task.get('due_at') else None
+        if horizon == 'someday' or due is None:
+            when = '待安排（无时间）'
+        elif horizon == 'week':
+            when = f'{due:%Y-%m-%d} 截止（本周内）'
+        elif horizon == 'month':
+            when = f'{due:%Y-%m-%d} 截止（本月内）'
+        else:
+            when = f'{due:%Y-%m-%d %H:%M}'
         title = ' '.join(str(task['title']).split()).replace('|', '/')
-        state = '已延期' if task.get('deferred') else ('已逾期' if due <= now else '未逾期')
-        label = REPEAT_LABELS.get(task.get('repeat_rule', 'none'), '不重复')
+        state = []
+        if horizon == 'timed' and due:
+            state.append('已延期' if task.get('deferred') else ('已逾期' if due <= now else '未逾期'))
         if task.get('dingtalk'):
-            state += ' | 钉钉'
-        lines.append(f"{task['id']} | {title} | {due:%Y-%m-%d %H:%M} | {label} | {state}")
+            state.append('钉钉')
+        label = REPEAT_LABELS.get(task.get('repeat_rule', 'none'), '不重复')
+        lines.append(f"{task['id']} | {title} | {when} | {label} | {' | '.join(state) or '—'}")
     if len(tasks) > 50:
         lines.append(f'另有 {len(tasks) - 50} 条未列出，未列出的待办不能操作。')
     return '\n'.join(lines)
@@ -189,11 +200,28 @@ def local_reply(text, now=None):
                                           'dingtalk': dingtalk}]}, ensure_ascii=False)
         except ValueError:
             pass
+    bucket = re.search(r'提醒我\s*(.+)', text)
+    if bucket and re.search(r'本周|这周|这一周|本月|这个月|这月', text):
+        horizon = 'week' if re.search(r'本周|这周|这一周', text) else 'month'
+        title = re.sub(r'^(?:在)?(?:本周|这周|这一周|本月|这个月|这月)(?:内|里|之内)?(?:要|需要)?(?:完成|做完|处理)?',
+                       '', bucket.group(1)).strip('，,。！!；; ')
+        if title:
+            return json.dumps({'reply': '已记入本周任务。' if horizon == 'week' else '已记入本月任务。',
+                               'tasks': [{'title': title, 'horizon': horizon, 'repeat': 'none',
+                                          'dingtalk': dingtalk}]}, ensure_ascii=False)
+    if bucket and not re.search(r'\d{1,2}\s*[:：]\s*\d{2}|\d+\s*(分钟|小时|天)|今天|明天|后天|每天|工作日|每周|周[一二三四五六日天]', text):
+        title = bucket.group(1).strip('，,。！!；; ')
+        if title:
+            return json.dumps({'reply': '已记入待安排。',
+                               'tasks': [{'title': title, 'horizon': 'someday', 'repeat': 'none',
+                                          'dingtalk': dingtalk}]}, ensure_ascii=False)
     if MANAGE_REQUEST.search(text):
         return json.dumps({'reply': '当前是本地规则模式，暂不支持在对话中修改、完成或删除待办。'
                                     '请到待办页双击编辑，或配置模型后再在对话中操作。', 'tasks': []},
                           ensure_ascii=False)
-    return json.dumps({'reply': '当前是本地规则模式。你可以说“明天15:00提醒我交报告”，或在待办页手动创建任务。配置模型后可进行自由聊天和任务规划。', 'tasks': []}, ensure_ascii=False)
+    return json.dumps({'reply': '当前是本地规则模式。你可以说“明天15:00提醒我交报告”“提醒我整理书架”（记入待安排），'
+                                '或在待办页手动创建任务。配置模型后可进行自由聊天和任务规划。', 'tasks': []},
+                      ensure_ascii=False)
 
 
 def test_connection(settings, timeout=8):
@@ -272,9 +300,9 @@ def ask(settings, messages, on_chunk=None, cancelled=None, tasks=None, search_co
     system = ('你是一个中文桌面宠物待办助手。当前本地时间：' + now + '。'
               '帮助用户聊天和规划任务。用中文回答，正文使用 Markdown：按需使用标题、列表、粗体和代码块，不要输出 HTML。'
               '需要创建待办时，在正文最后另起一个代码块，语言标记为 tasks，块内只放 JSON 数组：'
-              '```tasks\n[{"title":"任务标题","due_at":"带时区偏移的ISO8601时间","repeat":"none","dingtalk":false}]\n```\n'
+              '```tasks\n[{"title":"任务标题","horizon":"timed","due_at":"带时区偏移的ISO8601时间","repeat":"none","dingtalk":false}]\n```\n'
               'tasks 块必须是回复的最后一部分，正文不要复述块内内容；普通聊天不要输出 tasks 块。'
-              'tasks 块也用于管理已有待办：{"action":"update","id":"…","title":"新标题","due_at":"…"} 修改，只写要改的字段；'
+              'tasks 块也用于管理已有待办：{"action":"update","id":"…","title":"新标题","due_at":"…","horizon":"…"} 修改，只写要改的字段；'
               '{"action":"complete","id":"…"} 完成；{"action":"delete","id":"…"} 删除。'
               '修改、完成、删除只能使用“当前未完成待办”清单中逐字复制的 id，不得编造；清单里没有对应待办时不要输出这些操作。'
               '同一标题有多条且无法确定用户指代时，先列出候选（标题和时间）让用户选择，不要自行挑一条。'
@@ -287,7 +315,11 @@ def ask(settings, messages, on_chunk=None, cancelled=None, tasks=None, search_co
               '用户明确要求每天、工作日或每周时直接填对应规则；只说“重复提醒”或“重复”而没有频率时，默认daily每天同一时间，并在回复中简要说明，不再追问频率。'
               '用户明确说不重复或只提醒一次时使用none。用户要求每月、自定义间隔等不支持的规则时说明限制，不要擅自改成每天。'
               'due_at为下一次未来时间，普通聊天不要凭空创建任务。'
-              '时间不明确时追问，不自行猜测。最多10个任务，不给过去时间。'
+              'horizon可省略或为timed（有明确时间，必须给due_at）、week（本周内完成）、month（本月内完成）、someday（暂时没有时间，记入待安排收集箱）。'
+              '用户说“这周/本周要做某事”时用week，说“这个月/本月要做某事”时用month；这两种情况不要给due_at，repeat固定为none。'
+              '用户要求记下或提醒一件事但完全没给时间线索（如“提醒我整理书架”）时，直接用someday记入待安排，不要追问时间。'
+              '只有用户给了定时意图但缺少具体时刻（如“明天提醒我”没给几点）时才追问具体时间，不要自行猜测。'
+              '最多10个任务，不给过去时间。'
               '用户明确要求创建待办或提醒且事项与时间完整时，直接输出 tasks，由程序自动保存并设置提醒，不要要求用户确认或点击保存。'
               '仅讨论、举例或规划建议不要输出 tasks；用户要求直接安排具体待办时才创建。'
               '不要受历史回复中“待确认”“需要保存”等旧流程影响。保存结果由程序反馈，正文不要声称已经执行成功。'

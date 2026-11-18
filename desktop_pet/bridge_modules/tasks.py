@@ -48,7 +48,8 @@ def handle(action, args, host):
         try:
             task_id = store.add(title, due_at, repeat=repeat,
                                 dingtalk=bool(args.get('dingtalk')),
-                                note=str(args.get('note') or ''))
+                                note=str(args.get('note') or ''),
+                                horizon=str(args.get('horizon') or 'timed'))
         except ValueError as exc:
             raise BridgeError(str(exc)) from None
         _refresh(host, 'add')
@@ -56,13 +57,16 @@ def handle(action, args, host):
     if action == 'edit':
         task_id = str(args.get('id') or '')
         row = _task(store, task_id)
+        horizon = str(args.get('horizon') or row['horizon'])
         due_at = args.get('dueAt', row['due_at'])
-        if 'dueAt' not in args and parse_due(row['due_at']) <= utc_now():
+        if (horizon == 'timed' and 'dueAt' not in args and row['due_at']
+                and parse_due(row['due_at']) <= utc_now()):
             raise BridgeError('该待办已逾期，请同时给出新的提醒时间')
         try:
             store.edit(task_id, args.get('title', row['title']), due_at,
                        repeat=args.get('repeat', row['repeat_rule']),
-                       dingtalk=args.get('dingtalk', bool(row['dingtalk'])))
+                       dingtalk=args.get('dingtalk', bool(row['dingtalk'])),
+                       horizon=horizon)
         except ValueError as exc:
             raise BridgeError(str(exc)) from None
         _after_action(host, window, task_id)
