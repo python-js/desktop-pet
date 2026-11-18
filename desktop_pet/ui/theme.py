@@ -223,18 +223,33 @@ def apply_theme(app, theme='light'):
     app.setStyleSheet(build_style(_active))
 
 
+# 品牌徽标几何：64x64 坐标系，圆角方块 + 掌心 + 四趾。
+# tools/make_brand_assets.py 复用同一组常量生成 GIF/ICO/favicon。
+BADGE_RECT = (1, 1, 62, 62, 16, 16)
+PAW_SHAPES = (
+    (20, 31, 25, 21),
+    (12, 24, 10, 12),
+    (23, 14, 10, 13),
+    (36, 15, 10, 13),
+    (46, 26, 9, 11),
+)
+
+
+def paint_brand_badge(painter, badge_color, paw_color):
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(badge_color))
+    painter.drawRoundedRect(*BADGE_RECT)
+    painter.setBrush(QColor(paw_color))
+    for x, y, width, height in PAW_SHAPES:
+        painter.drawEllipse(x, y, width, height)
+
+
 def application_icon():
     canvas = QPixmap(64, 64)
     canvas.fill(Qt.transparent)
     painter = QPainter(canvas)
     painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(_active.brand))
-    painter.drawRoundedRect(1, 1, 62, 62, 16, 16)
-    painter.setBrush(QColor(_active.brand_on))
-    painter.drawEllipse(20, 31, 25, 21)
-    for x, y, width, height in ((12, 24, 10, 12), (23, 14, 10, 13), (36, 15, 10, 13), (46, 26, 9, 11)):
-        painter.drawEllipse(x, y, width, height)
+    paint_brand_badge(painter, _active.brand, _active.brand_on)
     painter.end()
     return QIcon(canvas)
 

@@ -69,12 +69,11 @@ export function Icon(props: { name: IconName; size?: number; className?: string 
 export function Paw(props: { size?: number }) {
   return (
     <svg width={props.size ?? 18} height={props.size ?? 18} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <ellipse cx="5.2" cy="9.6" rx="1.9" ry="2.3" transform="rotate(-24 5.2 9.6)" />
-      <ellipse cx="8.6" cy="6.3" rx="2" ry="2.6" transform="rotate(-10 8.6 6.3)" />
-      <ellipse cx="13" cy="5.6" rx="2" ry="2.6" />
-      <ellipse cx="17.4" cy="7.3" rx="2" ry="2.5" transform="rotate(14 17.4 7.3)" />
-      <ellipse cx="20.1" cy="11.2" rx="1.8" ry="2.1" transform="rotate(32 20.1 11.2)" />
-      <path d="M12.1 10.9c3.3 0 6.3 2.7 6.3 5.5 0 2.2-1.8 3.5-3.9 3.5-1 0-1.7-.4-2.4-.4s-1.4.4-2.4.4c-2.1 0-3.9-1.3-3.9-3.5 0-2.8 3-5.5 6.3-5.5Z" />
+      <ellipse cx="12.1875" cy="15.5625" rx="4.6875" ry="3.9375" />
+      <ellipse cx="6.375" cy="11.25" rx="1.875" ry="2.25" />
+      <ellipse cx="10.5" cy="7.6875" rx="1.875" ry="2.4375" />
+      <ellipse cx="15.375" cy="8.0625" rx="1.875" ry="2.4375" />
+      <ellipse cx="18.9375" cy="11.8125" rx="1.6875" ry="2.0625" />
     </svg>
   )
 }

@@ -21,6 +21,7 @@ RUNTIME_PACKAGES = ('PySide6', 'PySide6_Essentials', 'PySide6_Addons', 'shiboken
 def build_command(output, work):
     return [sys.executable, '-m', 'PyInstaller', '--name', 'DesktopPet', '--windowed',
             '--onedir', '--clean',
+            '--icon', str(ROOT / 'assets' / 'app.ico'),
             '--add-data', f'{ROOT / "web" / "dist"};web',
             '--distpath', str(output), '--workpath', str(work / 'cache'),
             '--specpath', str(work),
