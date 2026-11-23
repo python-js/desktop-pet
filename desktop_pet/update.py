@@ -204,7 +204,8 @@ def spawn_installer(setup, app_exe, log_path):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     script = log_path.parent / 'install-update.ps1'
     script.write_text(HELPER_SCRIPT, encoding='utf-8')
-    flags = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+    # DETACHED_PROCESS makes PowerShell exit immediately without running the script.
+    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
     subprocess.Popen(
         ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
          '-File', str(script), '-WaitForPid', str(os.getpid()),

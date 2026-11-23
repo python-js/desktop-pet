@@ -94,6 +94,16 @@ class DownloadTests(unittest.TestCase):
             self.assertFalse(target.with_suffix('.part').exists())
 
 
+class SpawnTests(unittest.TestCase):
+    def test_helper_avoids_detached_process(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(update.subprocess, 'Popen') as popen:
+            update.spawn_installer(Path(folder) / 'setup.exe', Path(folder) / 'app.exe',
+                                   Path(folder) / 'install.log')
+            flags = popen.call_args.kwargs['creationflags']
+            self.assertFalse(flags & getattr(update.subprocess, 'DETACHED_PROCESS', 0))
+            self.assertTrue(flags & getattr(update.subprocess, 'CREATE_NO_WINDOW', 0))
+
+
 class ManagerTests(unittest.TestCase):
     def test_check_marks_available_and_busy_guards(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -1,6 +1,6 @@
 # Windows 构建与运行
 
-当前代码版本：`0.32.0`。最近已构建包为 `0.32.0`：`windows-0.32.0-20261123-174519-024257/DesktopPet-0.32.0-windows.zip`，包含本地知识库测评与 PDF 配图识读；其 SHA256 为 `083DD146BC08975ED6CAEE09086FB2E9311D9AEFB42CCF2F5A86FDB63619ED2D`。打包自检通过（qt-offscreen、sqlite、pet-image、pet3d-assets、web-bundle）。
+当前代码版本：`0.32.0`。最近已构建包为 `0.32.0`：`windows-0.32.0-20261123-185133-051876/`，包含 Inno Setup 安装器与 GitHub Releases 自动更新。`DesktopPet-0.32.0-setup.exe` 大小 132,542,116 字节，SHA256 为 `AC6056CC2847943F2C510BC606FB0D13B843630B930DFAFD6A4E2A5A121D647F`；ZIP 绿色版大小 191,556,455 字节，SHA256 为 `1E97E64F9BEB3BE2618B81BB7D4C5B79B713DED219DB1990FF7ACE4F0C5A841B`。打包自检通过（qt-offscreen、sqlite、pet-image、pet3d-assets、web-bundle）。
 
 ## 构建
 
@@ -53,4 +53,4 @@ $env:GITHUB_TOKEN = '<具有 repo 权限的 token>'
 
 ## 验收边界
 
-验证日志截至 2026-11-11 记录了 Win11 单屏 2560×1440@100% 下的 WebEngine 界面/桥接检查、打包自检及有限常驻运行观察。Win10、125%/150% DPI、双屏与跨屏拖动、休眠唤醒、干净机器首次启动、DPAPI 登录启动的目标机验收尚未完成；签名前还应按实际发行渠道复核 Qt/PySide6 许可及发行义务。详细证据见 [验证记录](VALIDATION.md) 与 [Web 迁移计划](WEB_MIGRATION_PLAN.md)。
+验证日志截至 2026-11-11 记录了 Win11 单屏 2560×1440@100% 下的 WebEngine 界面/桥接检查、打包自检及有限常驻运行观察。2026-11-23 在本机 Win11 完成安装器与自动更新验收：per-user 全新安装、覆盖安装（HKCU Run 指向迁移）、卸载（清理启动项/目录、保留数据目录），以及一次完整自动更新（检查 → 下载 132 MB → SHA256/大小校验 → 退出 → PowerShell 助手静默安装 → 重启安装版）。Win10、125%/150% DPI、双屏与跨屏拖动、休眠唤醒、干净机器首次启动、DPAPI 登录启动的目标机验收尚未完成；签名前还应按实际发行渠道复核 Qt/PySide6 许可及发行义务。详细证据见 [验证记录](VALIDATION.md) 与 [Web 迁移计划](WEB_MIGRATION_PLAN.md)。

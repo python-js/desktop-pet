@@ -25,9 +25,14 @@ def find_iscc():
         if path.is_file():
             return path
         raise SystemExit('INNO_SETUP_ISCC does not point to ISCC.exe.')
+    candidates = []
+    local = os.environ.get('LOCALAPPDATA')
+    if local:
+        candidates.append(Path(local) / 'Programs' / 'Inno Setup 6' / 'ISCC.exe')
     for base in (os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
                  os.environ.get('ProgramFiles', r'C:\Program Files')):
-        path = Path(base) / 'Inno Setup 6' / 'ISCC.exe'
+        candidates.append(Path(base) / 'Inno Setup 6' / 'ISCC.exe')
+    for path in candidates:
         if path.is_file():
             return path
     found = shutil.which('ISCC')
