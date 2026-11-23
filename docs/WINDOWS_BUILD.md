@@ -1,6 +1,6 @@
 # Windows 构建与运行
 
-当前代码版本：`0.32.0`（2026-11-11）。最近已构建包为 `0.31.0`：`windows-0.31.0-20261111-113751-946102/DesktopPet-0.31.0-windows.zip`，未包含 0.32 视觉升级；其 SHA256 为 `FCA9C7AC0C54BAD1E85897E645F412D039E7E1022925E2E853499DE26E74D41D`。0.32 对应安装包需重新运行本页构建流程。
+当前代码版本：`0.32.0`。最近已构建包为 `0.32.0`：`windows-0.32.0-20261123-174519-024257/DesktopPet-0.32.0-windows.zip`，包含本地知识库测评与 PDF 配图识读；其 SHA256 为 `083DD146BC08975ED6CAEE09086FB2E9311D9AEFB42CCF2F5A86FDB63619ED2D`。打包自检通过（qt-offscreen、sqlite、pet-image、pet3d-assets、web-bundle）。
 
 ## 构建
 
