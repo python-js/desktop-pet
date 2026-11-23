@@ -35,6 +35,7 @@ export type SecretsStatus = {
 export type KnowledgeDoc = {
   doc_id: string
   name: string
+  source_path?: string
   page_count?: number
   added_at?: string
   wiki_error?: string
@@ -47,6 +48,91 @@ export type KnowledgeJobResult = {
   updated: number
   skipped: number
   failed: number
+  message: string
+}
+
+export type AssessmentQuestion = {
+  id: string
+  number: number
+  category: string
+  prompt: string
+  guide: string
+  reference: string
+  max_score: number
+  answer: string
+  score: number | null
+  feedback: string
+  reviewed: boolean
+  image_count: number
+}
+
+export type AssessmentImage = {
+  id: string
+  name: string
+  path?: string
+  question_id: string
+  transcription: string
+  role: 'reference' | 'answer' | 'unclassified'
+}
+
+export type AssessmentResult = {
+  question_id: string
+  score: number
+  max_score: number
+  feedback: string
+  evidence: string
+  criteria: { item: string; met: boolean; reason: string }[]
+}
+
+export type AssessmentRun = {
+  id: string
+  assessment_id: string
+  status: string
+  answers: Record<string, string>
+  results: AssessmentResult[]
+  score: number
+  max_score: number
+  created_at: string
+  candidate_name: string
+}
+
+export type Assessment = {
+  id: string
+  title: string
+  source_name: string
+  overview: string
+  declared_score: number
+  image_count: number
+  questions: AssessmentQuestion[]
+  images: AssessmentImage[]
+  runs: AssessmentRun[]
+  run_count?: number
+  question_count?: number
+}
+
+export type KnowledgeJobProgress = { jobId: string; message: string }
+export type GradeJobResult = {
+  jobId: string
+  ok: boolean
+  run?: AssessmentRun
+  cancelled?: boolean
+  message: string
+}
+export type KnowledgeVisionResult = {
+  jobId: string
+  ok: boolean
+  cancelled?: boolean
+  assessmentId?: string
+  imageId?: string
+  text?: string
+  message: string
+}
+export type AssessmentImportResult = {
+  jobId: string | null
+  assessmentId: string
+  completed: number
+  failed: { imageId: string; name: string; error: string }[]
+  cancelled: boolean
   message: string
 }
 
@@ -254,6 +340,7 @@ export const api = {
   pickFolder: (title: string) => invoke<{ path: string | null }>('system.pickFolder', { title }),
   pickSavePath: (name: string, filter: string, extension: string) =>
     invoke<{ path: string | null }>('system.pickSavePath', { name, filter, extension }),
+  writeTextFile: (name: string, text: string) => invoke<{ file: string | null; cancelled?: boolean }>('system.writeTextFile', { name, text, title: '导出测评报告', filter: 'Markdown 文件 (*.md)', extension: '.md' }),
   openDataDir: () => invoke<void>('system.openPath'),
   getSettings: () => invoke<Settings>('settings.getAll'),
   setSettings: (patch: Partial<Settings>) =>
@@ -274,11 +361,34 @@ export const api = {
   setStartup: (enabled: boolean) => invoke<void>('startup.set', { enabled }),
   knowledgeDocs: () => invoke<{ documents: KnowledgeDoc[] }>('knowledge.documents'),
   knowledgeStats: () => invoke<Record<string, number>>('knowledge.stats'),
+  knowledgeSearch: (query: string) => invoke<{ hits: KnowledgeHit[] }>('knowledge.search', { query }),
+  knowledgeImage: (imageId: string) =>
+    invoke<{ id: string; mime: string; data: string }>('knowledge.image', { imageId }),
   knowledgeRemove: (docId: string) => invoke<void>('knowledge.remove', { docId }),
   knowledgeClear: () => invoke<void>('knowledge.clear'),
   knowledgeImportPaths: (paths: string[]) =>
     invoke<{ jobId: string }>('knowledge.importPaths', { paths }),
-  knowledgeRebuild: () => invoke<{ jobId: string }>('knowledge.rebuild'),
+  knowledgeRebuild: (docId: string) => invoke<{ jobId: string }>('knowledge.rebuild', { docId }),
+  knowledgeAssessments: () => invoke<{ assessments: Assessment[] }>('knowledge.assessments'),
+  knowledgeAssessment: (assessmentId: string) => invoke<Assessment>('knowledge.assessment', { assessmentId }),
+  knowledgeImportAssessment: (path: string) => invoke<{ assessment: Assessment; jobId: string | null; visionSkipped: boolean }>('knowledge.importAssessment', { path }),
+  knowledgeSaveAssessment: (assessmentId: string, title: string, questions: AssessmentQuestion[]) =>
+    invoke<Assessment>('knowledge.saveAssessment', { assessmentId, title, questions }),
+  knowledgeDeleteAssessment: (assessmentId: string) => invoke<void>('knowledge.deleteAssessment', { assessmentId }),
+  knowledgeAssessmentImage: (assessmentId: string, imageId: string) =>
+    invoke<{ id: string; mime: string; data: string }>('knowledge.assessmentImage', { assessmentId, imageId }),
+  knowledgeRecognizeImage: (assessmentId: string, imageId: string) =>
+    invoke<{ jobId: string }>('knowledge.recognizeAssessmentImage', { assessmentId, imageId }),
+  knowledgeSaveAssessmentImage: (assessmentId: string, imageId: string) =>
+    invoke<{ file: string | null; cancelled?: boolean }>('knowledge.assessmentImageFile', { assessmentId, imageId }),
+  knowledgeSaveImageTranscription: (assessmentId: string, imageId: string, questionId: string, transcription: string, role: AssessmentImage['role']) =>
+    invoke<AssessmentImage>('knowledge.saveImageTranscription', { assessmentId, imageId, questionId, transcription, role }),
+  knowledgeGrade: (assessmentId: string, answers: Record<string, string>, candidateName = '') =>
+    invoke<{ jobId: string }>('knowledge.gradeAssessment', { assessmentId, answers, candidateName }),
+  knowledgeUpdateRun: (runId: string, results: AssessmentResult[]) =>
+    invoke<AssessmentRun>('knowledge.updateAssessmentRun', { runId, results }),
+  knowledgeDeleteRun: (runId: string) => invoke<void>('knowledge.deleteAssessmentRun', { runId }),
+  knowledgeExportRun: (runId: string) => invoke<{ markdown: string }>('knowledge.exportAssessmentRun', { runId }),
   petGallery: () => invoke<PetGallery>('pet.gallery'),
   petSelect: (image: string) => invoke<{ applied: boolean }>('pet.select', { image }),
   petChooseImage: () => invoke<{ changed: boolean }>('pet.chooseImage'),
@@ -374,6 +484,18 @@ export function onKnowledgeProgress(handler: (payload: { jobId: string; message:
 
 export function onKnowledgeDone(handler: (payload: KnowledgeJobResult) => void) {
   return on('knowledge.jobDone', handler)
+}
+
+export function onKnowledgeGradeDone(handler: (payload: GradeJobResult) => void) {
+  return on('knowledge.gradeDone', handler)
+}
+
+export function onKnowledgeVisionDone(handler: (payload: KnowledgeVisionResult) => void) {
+  return on('knowledge.visionDone', handler)
+}
+
+export function onAssessmentImportDone(handler: (payload: AssessmentImportResult) => void) {
+  return on('knowledge.assessmentImportDone', handler)
 }
 
 export function onPetChanged(handler: (payload: { active: string; changed: boolean }) => void) {

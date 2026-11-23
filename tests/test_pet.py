@@ -12,7 +12,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtCore import Qt, QPoint, QRect
 from PySide6.QtTest import QTest
 from desktop_pet.app import MainWindow
-from desktop_pet.ui.pet import BUBBLE_BOTTOM, BUBBLE_WIDTH
+from desktop_pet.ui.pet import BUBBLE_BOTTOM, BUBBLE_WIDTH, HINT_TEXT
 
 
 class PetTests(unittest.TestCase):
@@ -79,6 +79,37 @@ class PetTests(unittest.TestCase):
                     QRect(0, 0, pet.bubble.contentsRect().width(), 1000),
                     Qt.TextWordWrap, pet.bubble.text())
                 self.assertLessEqual(needed.height(), pet.bubble.contentsRect().height())
+            finally:
+                window.shutting_down = True
+                window.timer.stop()
+                window.pet.close()
+                window.tray.hide()
+                window.close()
+                window.store.close()
+                window.deleteLater()
+                app.processEvents()
+
+    def test_hover_hint_replaces_native_tooltip(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
+            window = MainWindow()
+            try:
+                pet = window.pet
+                self.assertEqual(pet.toolTip(), '')
+                self.assertEqual(pet.hint.text(), HINT_TEXT)
+                # 启动问候走 say()，12s 内气泡优先，提示隐藏。
+                self.assertTrue(pet.bubble.isVisible())
+                pet.show_hint()
+                self.assertFalse(pet.hint.isVisible())
+                pet.bubble_timer.stop()
+                pet.on_bubble_hidden()
+                self.assertFalse(pet.bubble.isVisible())
+                pet.show_hint()
+                self.assertTrue(pet.hint.isVisible())
+                self.assertEqual(pet.hint.y() + pet.hint.height(), BUBBLE_BOTTOM)
+                pet.say('摸摸收到')
+                self.assertFalse(pet.hint.isVisible())
+                self.assertTrue(pet.bubble.isVisible())
             finally:
                 window.shutting_down = True
                 window.timer.stop()

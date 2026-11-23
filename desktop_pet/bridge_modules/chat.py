@@ -14,6 +14,7 @@ from .. import websearch
 from ..assistant import local_reply, plain_text, reply_preview
 from ..bridge import BridgeError
 from ..core import decode_response
+from ..knowledge import attach_missed_images
 from ..planning import daily_snapshot, local_plan, planning_prompt
 
 
@@ -278,6 +279,8 @@ def _deliver(host, session_id, content, job_id, meta, sources, knowledge, notice
     window = _window(host)
     store = _store(host)
     reply, tasks, errors = decode_response(content)
+    if not tasks:
+        reply = attach_missed_images(reply, knowledge)
     receipts, errors, choice = (window.run_task_ops(tasks, session_id) if tasks
                                 else ([], errors, None))
     if tasks:

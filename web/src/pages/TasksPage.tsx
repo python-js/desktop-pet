@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api, Horizon, onTasksChanged, RepeatRule, Task } from '../api'
 import { Button, Icon, Pill, Segmented, Toggle } from '../ui'
@@ -13,6 +13,8 @@ import {
 
 type Mode = 'pending' | 'done'
 type Period = 'all' | 'today' | 'overdue' | 'future' | 'week' | 'month' | 'someday'
+
+const DONE_PAGE_SIZE = 20
 
 const PERIOD_OPTIONS: { key: Period; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -42,6 +44,7 @@ export default function TasksPage(props: {
   const [editor, setEditor] = useState<{ task: Task | null } | null>(null)
   const [lastDeleted, setLastDeleted] = useState<string[]>([])
   const [notice, setNotice] = useState('')
+  const [donePage, setDonePage] = useState(1)
 
   useEffect(() => {
     const pending = readCache<Task[]>('tasks.pending')
@@ -143,7 +146,9 @@ export default function TasksPage(props: {
   }
 
   const term = search.trim().toLowerCase()
-  const rows = (mode === 'pending' ? pendingRows : historyRows).filter((task) => {
+  const openRows = pendingRows.filter((task) => task.status !== 'done')
+  const doneRows = historyRows.filter((task) => task.status === 'done')
+  const rows = (mode === 'pending' ? openRows : doneRows).filter((task) => {
     if (term && !task.title.toLowerCase().includes(term)) return false
     if (mode !== 'pending') return true
     if (period === 'today') return isTimed(task) && isToday(task)
@@ -155,8 +160,24 @@ export default function TasksPage(props: {
     return true
   })
 
+  useEffect(() => { setDonePage(1) }, [search, mode])
+
+  const donePageCount = Math.max(1, Math.ceil(rows.length / DONE_PAGE_SIZE))
+  const donePageSafe = Math.min(donePage, donePageCount)
+
   const groups = useMemo(() => {
-    if (mode === 'done') return [{ label: `已完成 ${rows.length} 项`, tone: '', rows }]
+    if (mode === 'done') {
+      const sorted = [...rows].sort((a, b) => taskStamp(b) - taskStamp(a))
+      const page = sorted.slice((donePageSafe - 1) * DONE_PAGE_SIZE, donePageSafe * DONE_PAGE_SIZE)
+      const buckets = new Map<string, Task[]>()
+      for (const task of page) {
+        const label = task.due_at ? dayLabel(task.due_at) : '未定日期'
+        const list = buckets.get(label)
+        if (list) list.push(task)
+        else buckets.set(label, [task])
+      }
+      return [...buckets.entries()].map(([label, groupRows]) => ({ label, tone: '', rows: groupRows }))
+    }
     const overdue = rows.filter(isOverdue)
     const rest = rows.filter((task) => !isOverdue(task))
     const timed = rest.filter(isTimed)
@@ -173,7 +194,7 @@ export default function TasksPage(props: {
       { label: `本月 ${month.length} 项`, tone: '', rows: month },
       { label: `待安排 ${someday.length} 项`, tone: '', rows: someday },
     ].filter((group) => group.rows.length > 0)
-  }, [mode, rows])
+  }, [donePageSafe, mode, rows])
 
   const togglePick = (id: string) => {
     setSelected((prev) => {
@@ -255,8 +276,8 @@ export default function TasksPage(props: {
           ariaLabel="切换待办状态"
           value={mode}
           options={[
-            { value: 'pending', label: `未完成 ${pendingRows.length} 项` },
-            { value: 'done', label: `已完成 ${historyRows.length} 项` },
+            { value: 'pending', label: `未完成 ${openRows.length} 项` },
+            { value: 'done', label: `已完成 ${doneRows.length} 项` },
           ]}
           onChange={(value) => setMode(value as Mode)}
         />
@@ -328,25 +349,34 @@ export default function TasksPage(props: {
           <p className="empty-desc">{mode === 'pending' ? '换个筛选，或者新建一件事。' : '完成的任务会出现在这里。'}</p>
         </div>
       ) : (
-        groups.map((group) => (
-          <section key={group.label} className="group">
-            <div className={`group-label${group.tone === 'alert' ? ' alert' : ''}`}>{group.label}</div>
-            {group.rows.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                mode={mode}
-                picked={selected.has(task.id)}
-                onPick={() => togglePick(task.id)}
-                onEdit={() => setEditor({ task })}
-                onSnooze={() => void act('顺延', () => api.taskSnooze(task.id, 10))}
-                onComplete={() => void act('完成', () => api.taskComplete(task.id))}
-                onReopen={() => void act('重新打开', () => api.taskReopen(task.id))}
-                onDelete={() => void removeMany([task.id])}
-              />
-            ))}
-          </section>
-        ))
+        <Fragment key={mode}>
+          {groups.map((group) => (
+            <section key={`${mode}-${group.label}`} className="group">
+              <div className={`group-label${group.tone === 'alert' ? ' alert' : ''}`}>{group.label}</div>
+              {group.rows.map((task) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  mode={mode}
+                  picked={selected.has(task.id)}
+                  onPick={() => togglePick(task.id)}
+                  onEdit={() => setEditor({ task })}
+                  onSnooze={() => void act('顺延', () => api.taskSnooze(task.id, 10))}
+                  onComplete={() => void act('完成', () => api.taskComplete(task.id))}
+                  onReopen={() => void act('重新打开', () => api.taskReopen(task.id))}
+                  onDelete={() => void removeMany([task.id])}
+                />
+              ))}
+            </section>
+          ))}
+          {mode === 'done' && rows.length > DONE_PAGE_SIZE && (
+            <div className="task-pager">
+              <Button small disabled={donePageSafe <= 1} onClick={() => setDonePage(donePageSafe - 1)}>上一页</Button>
+              <span>第 {donePageSafe} / {donePageCount} 页</span>
+              <Button small disabled={donePageSafe >= donePageCount} onClick={() => setDonePage(donePageSafe + 1)}>下一页</Button>
+            </div>
+          )}
+        </Fragment>
       )}
 
       {selected.size > 0 && (
@@ -410,7 +440,6 @@ function TaskRow(props: {
         aria-pressed={props.picked}
         onClick={props.onPick}
         onDoubleClick={props.onEdit}
-        title="单击选择，双击编辑"
       >
         <div className="task-title">{task.title}</div>
         {sub && <div className="task-sub">{sub}</div>}
@@ -597,7 +626,7 @@ function TaskEditor(props: {
           placeholder="要做的事"
         />
       </label>
-      <div className="task-horizon-section">
+      <div className="task-horizon-section flex items-center gap-4">
         <span className="field-label task-section-label">期限</span>
         <Segmented options={HORIZON_OPTIONS} value={horizon} onChange={setHorizon} ariaLabel="任务期限" />
       </div>
@@ -691,6 +720,12 @@ function TaskEditor(props: {
       </div>
     </form>
   )
+}
+
+function taskStamp(task: Task): number {
+  const raw = task.due_at || task.completed_at || ''
+  const time = new Date(raw).getTime()
+  return Number.isNaN(time) ? 0 : time
 }
 
 function dayLabel(iso: string): string {

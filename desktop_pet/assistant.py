@@ -1,5 +1,6 @@
 """Provider-neutral compatible chat protocol; never executes model actions."""
 import json
+import base64
 import re
 import time
 from datetime import datetime, timedelta
@@ -59,6 +60,7 @@ def reply_preview(raw):
 
 def plain_text(text):
     """Flatten a Markdown reply for the pet bubble."""
+    text = re.sub(r'\[\[img:[0-9a-f]+\]\]', '', text)
     text = re.sub(r'```.*?```', '', text, flags=re.S)
     text = re.sub(r'!?\[([^\]]*)\]\([^)]*\)', r'\1', text)
     text = re.sub(r'(?m)^\s*(?:[-+*]|\d+\.)\s+', '', text)
@@ -287,6 +289,64 @@ def complete(settings, system, user, cancelled=None, timeout=90):
         raise ValueError('无法连接模型服务或请求超时，请检查网络和服务地址。') from None
     except (KeyError, IndexError, TypeError, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
         raise ValueError('服务返回格式不兼容，请确认支持 Chat Completions 接口。') from None
+
+
+def complete_vision(settings, system, user, image_bytes, mime, cancelled=None, timeout=120):
+    """Send one local image to an OpenAI-compatible vision chat endpoint."""
+    cancelled = cancelled or (lambda: False)
+    base = str(settings.get('base_url') or '').strip()
+    model = str(settings.get('model') or '').strip()
+    if not base or not model:
+        raise ValueError('请先在偏好设置中配置模型服务')
+    if mime not in ('image/png', 'image/jpeg', 'image/webp', 'image/gif'):
+        raise ValueError('模型识图目前支持 PNG、JPEG、WebP 和 GIF 图片')
+    if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
+        raise ValueError('图片数据为空')
+    if len(image_bytes) > 12 * 1024 * 1024:
+        raise ValueError('图片超过 12 MB，无法发送给模型识别')
+    if cancelled():
+        raise RequestCancelled()
+    data_url = f'data:{mime};base64,' + base64.b64encode(image_bytes).decode('ascii')
+    body = json.dumps({
+        'model': model,
+        'stream': False,
+        'messages': [
+            {'role': 'system', 'content': system},
+            {'role': 'user', 'content': [
+                {'type': 'text', 'text': user},
+                {'type': 'image_url', 'image_url': {'url': data_url}},
+            ]},
+        ],
+    }).encode('utf-8')
+    headers = {'Content-Type': 'application/json'}
+    if settings.get('api_key'):
+        headers['Authorization'] = 'Bearer ' + settings['api_key']
+    req = request.Request(validate_endpoint(base) + '/chat/completions',
+                          data=body, headers=headers, method='POST')
+    try:
+        with request.build_opener(NoRedirect()).open(req, timeout=timeout) as response:
+            data = response.read(2 * 1024 * 1024 + 1)
+        if cancelled():
+            raise RequestCancelled()
+        if len(data) > 2 * 1024 * 1024:
+            raise ValueError('模型识别结果过大')
+        payload = json.loads(data)
+        content = payload['choices'][0]['message']['content']
+        if isinstance(content, list):
+            content = '\n'.join(str(item.get('text') or '') for item in content if isinstance(item, dict))
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError('模型没有返回可用的识别文字')
+        return content.strip()
+    except RequestCancelled:
+        raise
+    except error.HTTPError as exc:
+        if exc.code in (400, 415, 422):
+            raise ValueError('当前模型或服务接口不支持图片输入，请切换到支持视觉识别的模型。') from None
+        raise ValueError(f'模型服务返回 HTTP {exc.code}，图片识别未完成。') from None
+    except (error.URLError, TimeoutError, OSError):
+        raise ValueError('无法连接模型服务或识图请求超时，请检查网络和服务地址。') from None
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        raise ValueError('模型服务返回格式不兼容，图片识别未完成。') from None
 
 
 def ask(settings, messages, on_chunk=None, cancelled=None, tasks=None, search_context=None):

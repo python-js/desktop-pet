@@ -102,18 +102,20 @@ class WebShell(QWidget):
             self._recover_delay = min(5000, self._recover_delay * 2)
 
     def ensure_alive(self, hidden_seconds=0.0):
-        """主窗显示前后调用：页面空白、隐藏加载或久置后强制重载，否则做存活探测。"""
+        """主窗显示后探测页面；只在渲染进程丢失或探测失败时重载。"""
         if self._loading or not self._loaded_once:
             return
-        if (self.render_lost or self._loaded_hidden
-                or hidden_seconds >= HIDDEN_RELOAD_SECONDS):
+        if self.render_lost or self._loaded_hidden:
             self.reload()
             return
         self._probe_id += 1
         probe_id = self._probe_id
         self._probe_ok = False
         self.view.page().runJavaScript(HEALTH_JS, lambda value: self._on_probe(probe_id, value))
-        self._probe_timer.start(1500)
+        # After a long sleep Chromium may take longer to resume its renderer.
+        # Give it time to answer before falling back to a page reload.
+        timeout = 5000 if hidden_seconds >= HIDDEN_RELOAD_SECONDS else 1500
+        self._probe_timer.start(timeout)
 
     def _on_probe(self, probe_id, value):
         if probe_id != self._probe_id:

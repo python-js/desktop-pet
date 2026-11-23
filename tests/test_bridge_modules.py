@@ -36,7 +36,7 @@ class FakeKnowledge:
         self.progress_seen = []
 
     def documents(self):
-        return [{'doc_id': 'd1', 'name': 'a.pdf', 'source_path': str(Path('nope.pdf'))}]
+        return getattr(self, 'docs', [{'doc_id': 'd1', 'name': 'a.pdf', 'source_path': str(Path('nope.pdf'))}])
 
     def stats(self):
         return {'docs': 1}
@@ -368,9 +368,23 @@ class KnowledgeModuleTests(BridgeModuleTestsBase):
         self.assertTrue(self.window.knowledge.cleared)
 
     def test_rebuild_without_sources(self):
-        resp = self.invoke('knowledge.rebuild')
+        resp = self.invoke('knowledge.rebuild', {'docId': 'd1'})
         self.assertEqual(resp['error']['code'], 'VALIDATION_ERROR')
         self.assertIn('没有可重建', resp['error']['message'])
+
+    def test_rebuild_requires_one_selected_file(self):
+        missing = self.invoke('knowledge.rebuild')
+        self.assertEqual(missing['error']['code'], 'VALIDATION_ERROR')
+        unknown = self.invoke('knowledge.rebuild', {'docId': 'missing'})
+        self.assertEqual(unknown['error']['code'], 'NOT_FOUND')
+        path = self.window.root / '手册.pdf'
+        path.write_bytes(b'%PDF')
+        self.window.knowledge.docs = [{'doc_id': 'd2', 'name': '手册.pdf', 'source_path': str(path)}]
+        resp = self.invoke('knowledge.rebuild', {'docId': 'd2'})
+        self.assertTrue(resp['ok'])
+        _, payload = self.wait_for_event('knowledge.jobDone')
+        self.assertEqual(payload['updated'], 1)
+        self.assertEqual(payload['added'], 0)
 
     def test_import_job_counts_and_progress(self):
         resp = self.invoke('knowledge.importPaths',

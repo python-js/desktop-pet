@@ -7,7 +7,7 @@ export type IconName =
   | 'sparkles' | 'moon' | 'sun' | 'edit' | 'trash' | 'x' | 'stop'
   | 'send' | 'pause' | 'play' | 'refresh' | 'folder' | 'download' | 'image'
   | 'link' | 'alert' | 'info' | 'list' | 'book' | 'database' | 'user' | 'copy'
-  | 'panel'
+  | 'panel' | 'file' | 'clipboard'
 
 const ICONS: Record<IconName, ReactNode> = {
   home: <><path d="M3 10.5 12 3l9 7.5" /><path d="M5.5 9.5V20h13V9.5" /></>,
@@ -45,6 +45,8 @@ const ICONS: Record<IconName, ReactNode> = {
   user: <><circle cx="12" cy="8" r="3.6" /><path d="M5 20c.6-3.6 3.4-5.5 7-5.5s6.4 1.9 7 5.5" /></>,
   copy: <><rect x="8.5" y="8.5" width="11" height="11" rx="2.2" /><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5" /></>,
   panel: <><rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M9.5 4.5v15" /></>,
+  file: <><path d="M6 3.5h8l4 4v13H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z" /><path d="M14 3.5v4h4M8 12h8M8 16h8" /></>,
+  clipboard: <><rect x="5" y="5" width="14" height="16" rx="2" /><path d="M9 5V3.5h6V5M8.5 10h7M8.5 14h7M8.5 18h4" /></>,
 }
 
 export function Icon(props: { name: IconName; size?: number; className?: string }) {

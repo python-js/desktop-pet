@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from desktop_pet.knowledge import (KnowledgeBase, KnowledgeError, chunk_text, extract_text,
-                                   format_context)
+from desktop_pet.knowledge import (KnowledgeBase, KnowledgeError, attach_missed_images,
+                                   chunk_text, extract_text, format_context, _pdf_chunks)
 
 
 SETTINGS = {'model': 'test', 'base_url': 'https://example.invalid/v1'}
@@ -90,6 +90,22 @@ class ChunkTests(unittest.TestCase):
         self.assertEqual(len(chunks), 2)
         self.assertTrue(chunks[0].startswith('甲'))
         self.assertTrue(chunks[1].startswith('乙'))
+
+    def test_heading_starts_a_new_chunk_and_sentences_stay_whole(self):
+        from desktop_pet.knowledge import _structure_pdf_text
+        structured = _structure_pdf_text(
+            '前言正文第一行\n仍是同一段。\n\n第一章 总则\n本制度适用于\n全体员工。\n1.1 范围\n具体范围如下。超出部分另起。')
+        self.assertIn('前言正文第一行仍是同一段。', structured)
+        self.assertIn('本制度适用于全体员工。', structured)
+        chunks = chunk_text(structured, 600, 80)
+        self.assertTrue(chunks[0].startswith('前言'))
+        self.assertNotIn('第一章', chunks[0])
+        self.assertTrue(any(chunk.startswith('第一章 总则') and '全体员工' in chunk for chunk in chunks))
+        self.assertTrue(any(chunk.startswith('1.1 范围') for chunk in chunks))
+        long = '第一句内容完整。' * 3
+        pieces = chunk_text(long, 20, 4)
+        self.assertGreater(len(pieces), 1)
+        self.assertTrue(all(piece.endswith('。') for piece in pieces))
 
 
 class KnowledgeBaseTests(unittest.TestCase):
@@ -189,6 +205,102 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn('报销制度.md', context)
         self.assertIn('不得改变', context)
         self.assertIn('600', context)
+
+
+class PdfImageTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_page_chunks_keep_the_figure_with_every_section(self):
+        image_id = 'a' * 24
+        chunks = _pdf_chunks([{
+            'text': '点击设置按钮完成登录。\n\n' + '说明' * 400,
+            'images': [{'id': image_id, 'caption': '右上角是设置按钮。'}],
+        }])
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(f'[[img:{image_id}]]' in chunk and '设置按钮' in chunk for chunk in chunks))
+
+    def test_missed_images_are_appended_once(self):
+        image_id = 'b' * 24
+        hits = [{'text': f'打开设置。\n[[img:{image_id}]] 右上角'}]
+        self.assertTrue(attach_missed_images('按下面操作。', hits).endswith(f'[[img:{image_id}]]'))
+        kept = f'1. 打开设置。\n\n[[img:{image_id}]]'
+        self.assertEqual(attach_missed_images(kept, hits), kept)
+
+    def test_context_tells_the_model_to_copy_image_tokens(self):
+        image_id = 'c' * 24
+        context = format_context([{
+            'doc_name': '手册.pdf', 'kind': 'raw',
+            'text': f'点击设置。\n[[img:{image_id}]] 右上角是设置按钮。'}])
+        self.assertIn(f'[[img:{image_id}]]', context)
+        self.assertIn('原样复制', context)
+
+    def test_pdf_image_is_stored_captioned_and_removed_with_the_document(self):
+        import os
+        from pypdf import PdfWriter
+        from pypdf.generic import DictionaryObject, NameObject, NumberObject, StreamObject
+
+        def captioner(settings, image, cancelled):
+            self.assertEqual(image['mime'], 'image/png')
+            return '右上角是设置按钮。'
+
+        pdf = self.root / '手册.pdf'
+        writer = PdfWriter()
+        page = writer.add_blank_page(300, 400)
+
+        def image(data, width, height):
+            stream = StreamObject()
+            stream.set_data(data)
+            stream.update({
+                NameObject('/Type'): NameObject('/XObject'),
+                NameObject('/Subtype'): NameObject('/Image'),
+                NameObject('/Width'): NumberObject(width),
+                NameObject('/Height'): NumberObject(height),
+                NameObject('/ColorSpace'): NameObject('/DeviceRGB'),
+                NameObject('/BitsPerComponent'): NumberObject(8),
+            })
+            return writer._add_object(stream)
+
+        resources = page[NameObject('/Resources')]
+        resources[NameObject('/XObject')] = DictionaryObject({
+            NameObject('/Im1'): image(os.urandom(100 * 100 * 3), 100, 100),
+            NameObject('/Im2'): image(b'\xff' * (10 * 10 * 3), 10, 10),
+        })
+        font = writer._add_object(DictionaryObject({
+            NameObject('/Type'): NameObject('/Font'),
+            NameObject('/Subtype'): NameObject('/Type1'),
+            NameObject('/BaseFont'): NameObject('/Helvetica'),
+        }))
+        resources[NameObject('/Font')] = DictionaryObject({NameObject('/F1'): font})
+        contents = StreamObject()
+        contents.set_data(
+            b'BT /F1 12 Tf 40 260 Td (Click settings to sign in.) Tj ET '
+            b'q 120 0 0 120 40 80 cm /Im1 Do Q q 10 0 0 10 20 20 cm /Im2 Do Q')
+        page[NameObject('/Contents')] = writer._add_object(contents)
+        with pdf.open('wb') as handle:
+            writer.write(handle)
+
+        kb = KnowledgeBase(self.root / 'knowledge', compiler=lambda *args: '', captioner=captioner)
+        try:
+            result = kb.add_file(pdf, SETTINGS)
+            raw = next(hit for hit in kb.search('settings') if hit['kind'] == 'raw')
+            self.assertIn('[[img:', raw['text'])
+            self.assertIn('设置按钮', raw['text'])
+            image_id = raw['text'].split('[[img:', 1)[1].split(']]', 1)[0]
+            loaded = kb.doc_image(image_id)
+            self.assertEqual(loaded['mime'], 'image/png')
+            self.assertTrue(loaded['data'])
+            self.assertEqual(len(list(kb.assets.iterdir())), 1)
+            with self.assertRaises(KnowledgeError):
+                kb.doc_image('../secret')
+            self.assertTrue(kb.remove(result['id']))
+            self.assertEqual(list(kb.assets.iterdir()), [])
+        finally:
+            kb.close()
 
 
 if __name__ == '__main__':

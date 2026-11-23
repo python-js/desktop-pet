@@ -38,6 +38,24 @@ def handle(action, args, host):
         if path and extension and not path.lower().endswith(extension):
             path += extension
         return {'path': path or None}
+    if action == 'writeTextFile':
+        text = args.get('text')
+        if not isinstance(text, str) or len(text) > 5_000_000:
+            raise BridgeError('导出内容无效')
+        name = str(args.get('name') or '导出文件')[:200]
+        path, _ = QFileDialog.getSaveFileName(
+            None, str(args.get('title') or '导出文件'), str(Path.home() / name),
+            str(args.get('filter') or '所有文件 (*.*)'))
+        extension = str(args.get('extension') or '').strip().lower()
+        if path and extension and not path.lower().endswith(extension):
+            path += extension
+        if not path:
+            return {'file': None, 'cancelled': True}
+        try:
+            Path(path).write_text(text, encoding='utf-8')
+        except OSError:
+            raise BridgeError('无法写入导出文件，请选择可写入的位置') from None
+        return {'file': path.name}
     if action == 'openPath':
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(window.root)))
         return {}

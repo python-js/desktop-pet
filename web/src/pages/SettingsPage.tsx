@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   api,
-  KnowledgeDoc,
-  KnowledgeJobResult,
   onConnectionTested,
-  onKnowledgeDone,
-  onKnowledgeProgress,
   onPetChanged,
   PetGallery,
   SecretsStatus,
@@ -15,9 +11,7 @@ import { BridgeError } from '../bridge/bridge'
 import {
   Button, Card, Icon, Pill, Row, Segmented, StatusLine, TextInput, TimeInput, Toggle,
 } from '../ui'
-
-const KNOWLEDGE_FILTER =
-  '支持的资料 (*.pdf *.docx *.xlsx *.xlsm *.txt *.md *.markdown *.csv);;所有文件 (*.*)'
+import { setTheme, useTheme } from '../theme'
 
 function messageOf(err: unknown): string {
   return err instanceof BridgeError || err instanceof Error ? err.message : '操作失败，请重试。'
@@ -48,7 +42,6 @@ export default function SettingsPage(props: {
       <div className="settings-page">
         <ModelCard settings={props.settings} secrets={props.secrets} onSettings={props.onSettings} />
         <WebSearchCard settings={props.settings} secrets={props.secrets} onSettings={props.onSettings} />
-        <KnowledgeCard settings={props.settings} onSettings={props.onSettings} />
         <ReminderCard settings={props.settings} onSettings={props.onSettings} />
         <AppearanceCard settings={props.settings} onSettings={props.onSettings} />
         <DataCard dataDir={props.dataDir} />
@@ -249,161 +242,6 @@ function WebSearchCard(props: {
   )
 }
 
-function KnowledgeCard(props: { settings: Settings; onSettings: (patch: Partial<Settings>) => void }) {
-  const [docs, setDocs] = useState<KnowledgeDoc[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [status, setStatus] = useState('')
-  const [tone, setTone] = useState<'calm' | 'alert' | 'plain'>('plain')
-  const [busy, setBusy] = useState(false)
-  const jobId = useRef('')
-
-  const refresh = useCallback(async () => {
-    try {
-      const data = await api.knowledgeDocs()
-      setDocs(data.documents)
-      if (!busy) {
-        if (data.documents.length) {
-          const pages = data.documents.reduce((sum, d) => sum + (d.page_count ?? 0), 0)
-          setStatus(`已收录 ${data.documents.length} 份资料、${pages} 段索引。`)
-          setTone('calm')
-        } else {
-          setStatus('尚未添加资料。导入后即可在对话里引用本地内容。')
-          setTone('plain')
-        }
-      }
-    } catch {
-      setDocs([])
-    }
-  }, [busy])
-
-  useEffect(() => { void refresh() }, [refresh])
-
-  useEffect(() => onKnowledgeProgress((payload) => {
-    if (payload.jobId !== jobId.current) return
-    setStatus(payload.message)
-    setTone('plain')
-  }), [])
-
-  useEffect(() => onKnowledgeDone(async (payload: KnowledgeJobResult) => {
-    if (payload.jobId !== jobId.current) return
-    setBusy(false)
-    setStatus(payload.message)
-    setTone(payload.failed || payload.cancelled ? 'alert' : 'calm')
-    await refresh()
-  }), [refresh])
-
-  const runJob = async (start: () => Promise<{ jobId: string }>, message: string) => {
-    if (busy) return
-    try {
-      const { jobId: id } = await start()
-      jobId.current = id
-      setBusy(true)
-      setStatus(message)
-      setTone('plain')
-    } catch (err) {
-      setStatus(messageOf(err))
-      setTone('alert')
-    }
-  }
-
-  const addFiles = async () => {
-    try {
-      const { paths } = await api.pickFiles('添加资料', KNOWLEDGE_FILTER)
-      if (paths.length) {
-        await runJob(() => api.knowledgeImportPaths(paths), `正在导入 ${paths.length} 项资料…`)
-      }
-    } catch (err) {
-      setStatus(messageOf(err))
-      setTone('alert')
-    }
-  }
-
-  const addFolder = async () => {
-    try {
-      const { path } = await api.pickFolder('添加资料文件夹')
-      if (path) {
-        await runJob(() => api.knowledgeImportPaths([path]), '正在导入资料文件夹…')
-      }
-    } catch (err) {
-      setStatus(messageOf(err))
-      setTone('alert')
-    }
-  }
-
-  const removeSelected = async () => {
-    if (!selected || busy) return
-    try {
-      await api.knowledgeRemove(selected)
-      setSelected(null)
-      await refresh()
-    } catch (err) {
-      setStatus(messageOf(err))
-      setTone('alert')
-    }
-  }
-
-  const clearAll = async () => {
-    if (busy || !docs.length) return
-    if (!window.confirm('确定移除全部资料？此操作不可撤销。')) return
-    try {
-      await api.knowledgeClear()
-      setSelected(null)
-      await refresh()
-    } catch (err) {
-      setStatus(messageOf(err))
-      setTone('alert')
-    }
-  }
-
-  return (
-    <Card title="本地知识库" icon="book" desc="导入 PDF / Word / Excel / txt / Markdown，回答前先查本地资料；资料内容会发送给已配置的模型整理。">
-      <Row label="检索开关" desc="没有资料时开关不可用；关闭后不再检索本地内容。">
-        <Toggle
-          label="回答前查阅本地资料"
-          desc="每次只把最相关的几段资料随问题发送给模型。"
-          checked={props.settings.knowledge_enabled ?? true}
-          disabled={!docs.length && !(props.settings.knowledge_enabled ?? true)}
-          onChange={(checked) => props.onSettings({ knowledge_enabled: checked })}
-        />
-      </Row>
-      <Row label="资料清单" desc="单文件不超过 30 MB；txt / md 之外需要重新安装以补齐解析组件。">
-        {docs.length === 0 ? (
-          <p className="list-empty">暂无资料</p>
-        ) : (
-          <div className="list-box" role="listbox" aria-label="资料清单">
-            {docs.map((doc) => (
-              <button
-                key={doc.doc_id}
-                type="button"
-                role="option"
-                aria-selected={selected === doc.doc_id}
-                className="list-item"
-                onClick={() => setSelected(selected === doc.doc_id ? null : doc.doc_id)}
-              >
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
-                <span className="meta">
-                  {doc.page_count ?? 0} 段{doc.wiki_error ? ' · Wiki 未生成' : ''}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="btn-row">
-          <Button onClick={() => void addFiles()} disabled={busy}>添加文件</Button>
-          <Button onClick={() => void addFolder()} disabled={busy}>添加文件夹</Button>
-          <Button onClick={() => void runJob(() => api.knowledgeRebuild(), '正在重建 Wiki…')} disabled={busy || !docs.length}>
-            重建 Wiki
-          </Button>
-          <Button onClick={() => void removeSelected()} disabled={busy || !selected}>移除所选</Button>
-          <Button onClick={() => void api.cancelJob(jobId.current)} disabled={!busy}>取消导入</Button>
-          <Button danger onClick={() => void clearAll()} disabled={busy || !docs.length}>清空资料</Button>
-        </div>
-        <StatusLine text={status} tone={tone} />
-      </Row>
-    </Card>
-  )
-}
-
 function ReminderCard(props: { settings: Settings; onSettings: (patch: Partial<Settings>) => void }) {
   const [startupChecked, setStartupChecked] = useState(false)
   const [startupDirty, setStartupDirty] = useState(false)
@@ -487,13 +325,14 @@ function ReminderCard(props: { settings: Settings; onSettings: (patch: Partial<S
 }
 
 function AppearanceCard(props: { settings: Settings; onSettings: (patch: Partial<Settings>) => void }) {
+  const theme = useTheme()
   return (
     <Card title="外观与密度" icon="sun" desc="主题与列表密度即时生效，只影响这台电脑。">
       <Row label="主题" desc="纸白适合白天，夜幕降低夜间亮度。">
         <Segmented
           options={[{ key: 'light', label: '纸白' }, { key: 'dark', label: '夜幕' }] as const}
-          value={props.settings.theme ?? 'light'}
-          onChange={(value) => props.onSettings({ theme: value })}
+          value={theme}
+          onChange={setTheme}
         />
       </Row>
       <Row label="密度" desc="宽松更清晰，紧凑一屏看更多。">

@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
 import { connectBridge } from './bridge/bridge'
 import { api, onNavigate, onSettingsChanged, onTasksChanged, SecretsStatus, Settings, SystemInfo, Task } from './api'
 import { formatDue } from './tasks'
@@ -7,16 +6,19 @@ import SettingsPage from './pages/SettingsPage'
 import HomePage from './pages/HomePage'
 import TasksPage from './pages/TasksPage'
 import ChatPage from './pages/ChatPage'
+import KnowledgePage from './pages/KnowledgePage'
 import { Icon, IconName, Paw, Pill } from './ui'
 import { fetchCached, invalidateCache, readCache } from './queryCache'
+import { applyTheme, initTheme, nextTheme, setTheme, useTheme } from './theme'
 
 type Phase = 'connecting' | 'loading' | 'ready' | 'error'
-type Page = 'home' | 'chat' | 'tasks' | 'settings'
+type Page = 'home' | 'chat' | 'tasks' | 'knowledge' | 'settings'
 
 const NAV: { key: Page; label: string; icon: IconName }[] = [
   { key: 'home', label: '首页', icon: 'home' },
   { key: 'chat', label: '对话助手', icon: 'chat' },
   { key: 'tasks', label: '待办事项', icon: 'tasks' },
+  { key: 'knowledge', label: '本地知识库', icon: 'book' },
   { key: 'settings', label: '偏好设置', icon: 'settings' },
 ]
 
@@ -33,6 +35,42 @@ async function copyToClipboard(text: string) {
   area.select()
   document.execCommand('copy')
   area.remove()
+}
+
+function toggleThemeWithReveal(button: HTMLButtonElement) {
+  const theme = nextTheme()
+  const apply = () => setTheme(theme)
+
+  const startViewTransition = document.startViewTransition?.bind(document)
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (!startViewTransition || reducedMotion) {
+    apply()
+    return
+  }
+
+  const rect = button.getBoundingClientRect()
+  const enteringNight = theme === 'dark'
+  const x = enteringNight ? window.innerWidth - 1 : rect.left + rect.width / 2
+  const y = enteringNight ? 0 : rect.top + rect.height / 2
+  const radius = Math.hypot(
+    Math.max(x, window.innerWidth - x),
+    Math.max(y, window.innerHeight - y),
+  )
+  const transition = startViewTransition(apply)
+  void transition.ready.then(() => {
+    const animation = document.documentElement.animate(
+      [
+        { clipPath: `circle(0px at ${x}px ${y}px)` },
+        { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
+      ],
+      {
+        duration: 480,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        pseudoElement: '::view-transition-new(root)',
+      },
+    )
+    return animation.finished.finally(() => animation.cancel())
+  }).catch(() => transition.skipTransition())
 }
 
 export default function App() {
@@ -73,6 +111,7 @@ export default function App() {
           api.getSettings(), api.getSecretsStatus(),
         ])
         if (cancelled) return
+        initTheme(loadedSettings.theme)
         setSettings(loadedSettings)
         setSecrets(loadedSecrets)
         setPhase('ready')
@@ -85,21 +124,20 @@ export default function App() {
     return () => { cancelled = true }
   }, [])
 
-  useEffect(() => onSettingsChanged((patch) => {
-    setSettings((prev) => (prev ? { ...prev, ...patch } : prev))
+  useEffect(() => onSettingsChanged(({ theme, ...patch }) => {
+    // 主题走独立订阅源，不再回灌 App 状态，避免每次切换多一次整页渲染。
+    if (theme) applyTheme(theme)
+    if (Object.keys(patch).length) {
+      setSettings((prev) => (prev ? { ...prev, ...patch } : prev))
+    }
   }), [])
 
   useEffect(() => onNavigate((payload) => {
     if (payload.page === 'home' || payload.page === 'chat'
-      || payload.page === 'tasks' || payload.page === 'settings') {
+      || payload.page === 'tasks' || payload.page === 'knowledge' || payload.page === 'settings') {
       navigate(payload.page)
     }
   }), [])
-
-  useEffect(() => {
-    const dark = settings?.theme === 'dark'
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light'
-  }, [settings?.theme])
 
   useEffect(() => {
     const close = () => setContextMenu(null)
@@ -163,50 +201,6 @@ export default function App() {
     void api.setSettings(patch).catch((err: unknown) => {
       console.error('保存设置失败', err)
     })
-  }
-
-  const toggleTheme = (button: HTMLButtonElement) => {
-    const theme = settings?.theme === 'dark' ? 'light' : 'dark'
-    const applyTheme = () => {
-      document.documentElement.dataset.theme = theme
-      flushSync(() => {
-        setSettings((prev) => (prev ? { ...prev, theme } : prev))
-      })
-      void api.setSettings({ theme }).catch((err: unknown) => {
-        console.error('保存设置失败', err)
-      })
-    }
-
-    const startViewTransition = document.startViewTransition?.bind(document)
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!startViewTransition || reducedMotion) {
-      patchSettings({ theme })
-      return
-    }
-
-    const rect = button.getBoundingClientRect()
-    const enteringNight = theme === 'dark'
-    const x = enteringNight ? window.innerWidth - 1 : rect.left + rect.width / 2
-    const y = enteringNight ? 0 : rect.top + rect.height / 2
-    const radius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y),
-    )
-    const transition = startViewTransition(applyTheme)
-    void transition.ready.then(() => {
-      const animation = document.documentElement.animate(
-        [
-          { clipPath: `circle(0px at ${x}px ${y}px)` },
-          { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
-        ],
-        {
-          duration: 480,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-          pseudoElement: '::view-transition-new(root)',
-        },
-      )
-      return animation.finished.finally(() => animation.cancel())
-    }).catch(() => transition.skipTransition())
   }
 
   const toggleRail = () => {
@@ -300,15 +294,7 @@ export default function App() {
 
         <div className="rail-bottom">
           <span>v{info.appVersion}</span>
-          <button
-            type="button"
-            className="icon-btn"
-            title={settings.theme === 'dark' ? '切换到纸白主题' : '切换到夜幕主题'}
-            aria-label="切换主题"
-            onClick={(event) => toggleTheme(event.currentTarget)}
-          >
-            <Icon name={settings.theme === 'dark' ? 'sun' : 'moon'} size={16} />
-          </button>
+          <RailThemeButton />
           <button
             type="button"
             className="icon-btn"
@@ -366,6 +352,9 @@ export default function App() {
             onSettings={patchSettings}
           />
         </section>}
+        {visitedPages.has('knowledge') && <section className={`content-panel${page === 'knowledge' ? ' is-active' : ''}`} aria-hidden={page !== 'knowledge'}>
+          <KnowledgePage settings={settings} onSettings={patchSettings} active={page === 'knowledge'} />
+        </section>}
       </main>
 
       <footer className="statusbar">
@@ -420,11 +409,27 @@ export default function App() {
   )
 }
 
+function RailThemeButton() {
+  const theme = useTheme()
+  return (
+    <button
+      type="button"
+      className="icon-btn"
+      title={theme === 'dark' ? '切换到纸白主题' : '切换到夜幕主题'}
+      aria-label="切换主题"
+      onClick={(event) => toggleThemeWithReveal(event.currentTarget)}
+    >
+      <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
+    </button>
+  )
+}
+
+const loadingGif = new URL('./assets/loading.gif', import.meta.url).href
+
 function Splash(props: { text: string }) {
   return (
     <main className="splash">
-      <span className="rail-logo"><Paw size={26} /></span>
-      <div className="spinner" aria-hidden />
+      <img className="splash-loader" src={loadingGif} alt="" />
       <p className="splash-text">{props.text}</p>
     </main>
   )

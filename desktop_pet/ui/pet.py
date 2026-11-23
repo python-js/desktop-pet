@@ -3,7 +3,7 @@ import random
 import time
 from PySide6.QtCore import QEvent, Qt, QTimer, QSize, QRect
 from PySide6.QtGui import QColor, QCursor, QFontMetrics, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QWidget, QLabel, QMenu, QStyle
+from PySide6.QtWidgets import QApplication, QWidget, QLabel, QMenu
 from ..animations import load_sequences
 from ..motion import CANVAS_SIZE, SUBJECT_SIZE, SUBJECT_BOTTOM
 
@@ -13,6 +13,7 @@ BUBBLE_BOTTOM = 84
 BUBBLE_TEXT_HEIGHT = 58  # 气泡最大高度 82 减去上下 padding 11×2 与边框 1×2
 BUBBLE_PAD_WIDTH = 28  # 样式 padding 13×2 + 边框 1×2
 BUBBLE_PAD_HEIGHT = 24  # 样式 padding 11×2 + 边框 1×2
+HINT_TEXT = '拖动移动 · 双击聊天 · 右键菜单'
 
 WINDOW_2D = QSize(220, 260)
 # 3D 模式在顶部预留气泡区，3D 画布从 y=88 开始，互不遮挡。
@@ -65,7 +66,6 @@ class Pet(QWidget):
         self.owner = owner
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(WINDOW_2D)
-        self.setToolTip('拖动移动 · 双击聊天 · 右键菜单')
         self.offset = None
         self.press_position = None
         self.dragged = False
@@ -80,18 +80,31 @@ class Pet(QWidget):
         self.frame_index = 0
         self.action_started = time.monotonic()
         self.phase = 0
+        from .theme import add_soft_shadow
         self.bubble = QLabel('双击我，开始聊天', self)
         self.bubble.setTextFormat(Qt.PlainText)
         self.bubble.setWordWrap(True)
         self.bubble.setAlignment(Qt.AlignCenter)
         self.bubble.setStyleSheet('background:#ffffff;color:#4A4039;border:1px solid #F1E3D7;border-radius:18px;padding:11px 13px;font-size:13px;')
-        from .theme import add_soft_shadow
         add_soft_shadow(self.bubble)
         self.bubble.ensurePolished()
         self.fit_bubble(self.bubble.text())
+        self.bubble.hide()
         self.bubble_timer = QTimer(self)
         self.bubble_timer.setSingleShot(True)
-        self.bubble_timer.timeout.connect(self.bubble.hide)
+        self.bubble_timer.timeout.connect(self.on_bubble_hidden)
+        self.hint = QLabel(HINT_TEXT, self)
+        self.hint.setTextFormat(Qt.PlainText)
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.hint.setStyleSheet(
+            'background:#FFFBF7;color:#6B5E54;border:1px solid #F1E3D7;'
+            'border-radius:14px;padding:8px 12px;font-size:13px;')
+        add_soft_shadow(self.hint)
+        self.hint.ensurePolished()
+        self.fit_hint()
+        self.hint.hide()
+        self._hovering = False
         timer = QTimer(self)
         timer.timeout.connect(self.animate)
         if not self.paused:
@@ -120,6 +133,7 @@ class Pet(QWidget):
         self.ensure_visible()
         if owner.settings.get('pet_mode', '3d') == '3d':
             self.enable_3d(persist=False)
+        self.say('双击我，开始聊天')
 
     def animate(self):
         if self.mode == '3d':
@@ -326,12 +340,20 @@ class Pet(QWidget):
             self.owner.statusBar().showMessage('当前环境无法启用 3D 视图，请确认已安装 PySide6 的 QtWebEngine 组件。', 8000)
 
     def eventFilter(self, watched, event):
-        # WebEngine 会吞掉鼠标事件，这里转发拖动、双击和右键菜单。
+        # WebEngine 会吞掉鼠标事件，这里转发拖动、双击和右键菜单；并补悬停提示。
         if watched is self.view3d or (self.view3d is not None and self.view3d.isAncestorOf(watched)):
+            if event.type() == QEvent.Enter:
+                self.set_hover(True)
+                return False
+            if event.type() == QEvent.Leave:
+                QTimer.singleShot(0, self.sync_hover)
+                return False
             if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
                 self.press(event.globalPos())
                 return True
             if event.type() == QEvent.MouseMove:
+                if self.offset is None:
+                    self.set_hover(True)
                 self.drag(event.globalPos(), event.buttons())
                 return True
             if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
@@ -361,10 +383,58 @@ class Pet(QWidget):
         self.bubble.setFixedSize(width, height)
         self.bubble.move((self.width() - width) // 2, BUBBLE_BOTTOM - height)
 
+    def fit_hint(self):
+        """操作提示单行，落在气泡槽位。"""
+        metrics = QFontMetrics(self.hint.font())
+        width = min(self.width() - 8, metrics.horizontalAdvance(HINT_TEXT) + 28)
+        height = metrics.height() + 18
+        self.hint.setFixedSize(width, height)
+        self.hint.move((self.width() - width) // 2, BUBBLE_BOTTOM - height)
+
+    def show_hint(self):
+        # 聊天气泡优先；拖动中不显示。
+        if self.bubble.isVisible() or self.dragged or self.offset is not None:
+            self.hint.hide()
+            return
+        self.fit_hint()
+        self.hint.show()
+        self.hint.raise_()
+
+    def hide_hint(self):
+        self.hint.hide()
+
+    def pet_contains_cursor(self):
+        return self.frameGeometry().contains(QCursor.pos())
+
+    def set_hover(self, inside):
+        if inside == self._hovering:
+            if inside:
+                self.show_hint()
+            return
+        self._hovering = inside
+        if inside:
+            if self.walking:
+                self.stop_walking(save=False)
+            if not self.paused and not self.dragged and self.action == 'idle':
+                self.play_action('hover')
+            self.show_hint()
+        else:
+            self.hide_hint()
+
+    def sync_hover(self):
+        self.set_hover(self.pet_contains_cursor())
+
+    def on_bubble_hidden(self):
+        self.bubble.hide()
+        if self.pet_contains_cursor():
+            self.show_hint()
+
     def say(self, text):
+        self.hide_hint()
         self.fit_bubble(text)
         self.bubble.setToolTip(text)
         self.bubble.show()
+        self.bubble.raise_()
         self.bubble_timer.start(12000)
 
     def static_size(self):
@@ -399,14 +469,16 @@ class Pet(QWidget):
             paint_default_pet(painter)
 
     def enterEvent(self, event):
-        if self.walking:
-            self.stop_walking(save=False)
-        if not self.paused and not self.dragged and self.action == 'idle':
-            self.play_action('hover')
+        self.set_hover(True)
         super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        QTimer.singleShot(0, self.sync_hover)
+        super().leaveEvent(event)
 
     def press(self, pos):
         self.stop_walking(save=False)
+        self.hide_hint()
         self.offset = pos - self.pos()
         self.press_position = pos
         self.dragged = False
@@ -426,13 +498,16 @@ class Pet(QWidget):
             self.set_3d_dragging(False)
             self.ensure_visible()
             self.save_preferences()
+            self.offset = None
+            if self.underMouse():
+                self.show_hint()
+            return
+        if self.mode == '3d':
+            self.react_3d()
         else:
-            if self.mode == '3d':
-                self.react_3d()
-            else:
-                self.play_action('touch')
-            self.say('摸摸收到！双击我可以聊天，也可以一起整理待办。')
+            self.play_action('touch')
         self.offset = None
+        self.say('摸摸收到！双击我可以聊天，也可以一起整理待办。')
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -497,28 +572,19 @@ class Pet(QWidget):
     def show_menu(self, pos):
         self.stop_walking(save=False)
         menu = QMenu(self)
-        style = self.style()
         menu.addSection('小满桌面助手')
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DesktopIcon),
-                       '打开主界面', self.owner.show_main)
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton),
-                       '显示 / 隐藏桌宠', self.owner.toggle_pet)
+        menu.addAction('打开主界面', self.owner.show_main)
+        menu.addAction('显示 / 隐藏桌宠', self.owner.toggle_pet)
         menu.addSeparator()
         menu.addSection('桌宠外观与动作')
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
-                       '更换桌宠图片', self.owner.choose_image)
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
-                       '切回 2D 形象' if self.mode == '3d' else '切换到 3D 形象', self.toggle_3d)
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay if self.paused else QStyle.StandardPixmap.SP_MediaPause),
-                       '恢复动画' if self.paused else '暂停动画', self.toggle_animation)
+        menu.addAction('更换桌宠图片', self.owner.choose_image)
+        menu.addAction('切回 2D 形象' if self.mode == '3d' else '切换到 3D 形象', self.toggle_3d)
+        menu.addAction('恢复动画' if self.paused else '暂停动画', self.toggle_animation)
         if self.mode == '3d':
-            menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
-                           '恢复走动' if not self.walking_enabled else '暂停走动', self.toggle_walking)
+            menu.addAction('恢复走动' if not self.walking_enabled else '暂停走动', self.toggle_walking)
         menu.addSeparator()
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
-                       '找回桌宠位置', self.reset_position)
-        menu.addAction(style.standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton),
-                       '退出小满', self.owner.quit_app)
+        menu.addAction('找回桌宠位置', self.reset_position)
+        menu.addAction('退出小满', self.owner.quit_app)
         menu.exec(pos)
         self.schedule_walk(5000)
 

@@ -527,7 +527,6 @@ class MainWindow(ShellMixin, QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
-        self._wake_shell()
 
     def closeEvent(self, event):
         if self.shutting_down:

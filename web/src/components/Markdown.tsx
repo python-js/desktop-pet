@@ -1,8 +1,35 @@
 // Minimal Markdown renderer for assistant replies: headings, lists, quotes,
-// fenced code and inline emphasis/links. Renders React nodes only — no HTML.
-import { ReactNode } from 'react'
+// fenced code, inline emphasis/links, and local knowledge-base figures.
+import { ReactNode, useEffect, useState } from 'react'
+import { api } from '../api'
 
-const INLINE = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\*[^*\n]+\*|\[[^\]\n]+\]\([^)\s]+\))/g
+const INLINE = /(\[\[img:[0-9a-f]{16,64}\]\]|\*\*[^*\n]+\*\*|`[^`\n]+`|\*[^*\n]+\*|\[[^\]\n]+\]\([^)\s]+\))/g
+const IMAGE_LINE = /^\[\[img:([0-9a-f]{16,64})\]\]\s*$/
+
+function DocImage(props: { id: string }) {
+  const [src, setSrc] = useState('')
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    let alive = true
+    api.knowledgeImage(props.id).then((result) => {
+      if (alive) setSrc(`data:${result.mime};base64,${result.data}`)
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [props.id])
+  if (!src) return null
+  return (
+    <>
+      <button type="button" className="md-figure" onClick={() => setOpen(true)}>
+        <img src={src} alt="" />
+      </button>
+      {open && (
+        <button type="button" className="md-figure-zoom" onClick={() => setOpen(false)}>
+          <img src={src} alt="" />
+        </button>
+      )}
+    </>
+  )
+}
 
 function safeHref(url: string): string | null {
   return /^https?:\/\//i.test(url) ? url : null
@@ -16,7 +43,9 @@ export function inline(text: string): ReactNode[] {
     if (index > last) out.push(text.slice(last, index))
     const token = match[0]
     const key = `${index}-${token.length}`
-    if (token.startsWith('**')) {
+    if (token.startsWith('[[img:')) {
+      out.push(<DocImage key={key} id={token.slice(6, -2)} />)
+    } else if (token.startsWith('**')) {
       out.push(<strong key={key}>{token.slice(2, -2)}</strong>)
     } else if (token.startsWith('`')) {
       out.push(<code key={key}>{token.slice(1, -1)}</code>)
@@ -39,7 +68,7 @@ export function inline(text: string): ReactNode[] {
   return out
 }
 
-const SPECIAL = /^(```|#{1,3}\s|>\s?|\s*[-*+]\s+|\s*\d+\.\s+|-{3,}\s*$|\*{3,}\s*$)/
+const SPECIAL = /^(```|#{1,3}\s|>\s?|\s*[-*+]\s+|\s*\d+\.\s+|-{3,}\s*$|\*{3,}\s*$|\[\[img:[0-9a-f]{16,64}\]\]\s*$)/
 
 export default function Markdown(props: { text: string }) {
   const lines = props.text.replace(/\r\n/g, '\n').split('\n')
@@ -74,6 +103,12 @@ export default function Markdown(props: { text: string }) {
     if (heading) {
       const Tag = `h${heading[1].length}` as 'h1' | 'h2' | 'h3'
       blocks.push(<Tag key={key++}>{inline(heading[2])}</Tag>)
+      index += 1
+      continue
+    }
+    const figure = IMAGE_LINE.exec(line.trim())
+    if (figure) {
+      blocks.push(<DocImage key={key++} id={figure[1]} />)
       index += 1
       continue
     }

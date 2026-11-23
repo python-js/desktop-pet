@@ -14,6 +14,8 @@ import LatticeLoader from '../components/LatticeLoader'
 import GlideSelect from '../components/GlideSelect'
 import SpecularButton from '../components/SpecularButton'
 
+const loadingGif = new URL('../assets/loading.gif', import.meta.url).href
+
 type UiMessage = ChatMessage & {
   sources?: SearchSource[]
   knowledge?: KnowledgeHit[]
@@ -506,7 +508,12 @@ export default function ChatPage(props: {
   return (
     <div className="chat-page">
       {refreshing && !initialLoading && <div className="page-refresh-indicator chat-refresh-indicator"><i />正在同步</div>}
-      {initialLoading && <div className="page-skeleton chat-skeleton" aria-label="正在加载对话"><span /><span /><span /></div>}
+      {initialLoading && (
+        <div className="chat-loading" role="status" aria-label="正在加载对话">
+          <img src={loadingGif} alt="" />
+          <p>正在加载对话</p>
+        </div>
+      )}
       <div className="chat">
         <section className="chat-main">
           <header className="chat-head">
