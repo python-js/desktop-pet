@@ -167,6 +167,27 @@ export type SystemInfo = {
   dataDir: string
 }
 
+export type UpdateManifest = {
+  version: string
+  min_version: string | null
+  notes: string
+  published_at: string
+  installer: { url: string; sha256: string; size: number }
+}
+
+export type UpdateState = {
+  currentVersion: string
+  state: 'idle' | 'checking' | 'latest' | 'available' | 'downloading' | 'ready' | 'installing' | 'error'
+  manifest: UpdateManifest | null
+  received: number
+  total: number
+  error: string
+  canInstall: boolean
+  skippedVersion: string
+}
+
+export type UpdateProgress = { jobId: string; received: number; total: number }
+
 export type RepeatRule = 'none' | 'daily' | 'weekdays' | 'weekly'
 export type Horizon = 'timed' | 'week' | 'month' | 'someday'
 
@@ -359,6 +380,11 @@ export const api = {
     invoke<{ jobId: string }>('secrets.testConnection', { kind, ...extra }),
   getStartup: () => invoke<{ enabled: boolean }>('startup.get'),
   setStartup: (enabled: boolean) => invoke<void>('startup.set', { enabled }),
+  updateGet: () => invoke<UpdateState>('update.get'),
+  updateCheck: () => invoke<void>('update.check'),
+  updateDownload: () => invoke<{ jobId: string }>('update.download'),
+  updateInstall: () => invoke<void>('update.install'),
+  updateSkip: (version: string) => invoke<{ skippedVersion: string }>('update.skip', { version }),
   knowledgeDocs: () => invoke<{ documents: KnowledgeDoc[] }>('knowledge.documents'),
   knowledgeStats: () => invoke<Record<string, number>>('knowledge.stats'),
   knowledgeSearch: (query: string) => invoke<{ hits: KnowledgeHit[] }>('knowledge.search', { query }),
@@ -476,6 +502,14 @@ export function onSettingsChanged(handler: (patch: Partial<Settings>) => void) {
 
 export function onConnectionTested(handler: (result: ConnectionTestResult) => void) {
   return on('connection.testResult', handler)
+}
+
+export function onUpdateState(handler: (state: UpdateState) => void) {
+  return on('update.state', handler)
+}
+
+export function onUpdateProgress(handler: (progress: UpdateProgress) => void) {
+  return on('update.progress', handler)
 }
 
 export function onKnowledgeProgress(handler: (payload: { jobId: string; message: string }) => void) {

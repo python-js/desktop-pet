@@ -211,6 +211,18 @@ bridge.event(name: string, payload: string)     // 前端 bridge.on(name, cb) �
 | `pet.say` | — | 气泡由壳子直接调用 `pet.say(text)`(QLabel,12s 自动隐藏),不经桥(Phase 4 决策) |
 | `pet.pause` / `pet.walking` / `pet.mode` | — | 非桥方法:暂停、走动与 2D/3D 切换都通过 `settings.set` 的 `pet_paused` / `pet_walking` / `pet_mode` 完成 |
 
+### 4.9 update — 检查、下载与安装更新(update.py)
+
+| 方法 | 类型 | 入参 | 出参 |
+|---|---|---|---|
+| `update.get` | 同步 | `{}` | `{currentVersion, state, manifest, received, total, error, canInstall, skippedVersion}` |
+| `update.check` | 同步(触发后台) | `{}` | `{}`;状态经 `update.state` 事件推送 |
+| `update.download` | **(job)** | `{}` | `{jobId}`;进度 `update.progress`,结束 `update.state=ready` |
+| `update.install` | 同步 | `{}` | `{}`;校验安装包后启动分离的 PowerShell 助手并退出应用 |
+| `update.skip` | 同步 | `{version}` | `{skippedVersion}`;写入 settings.json,启动检查不再提示该版本 |
+
+清单固定从 GitHub Releases 的 `latest.json` 读取,可用环境变量 `DESKTOP_PET_UPDATE_URL` 覆盖(测试用)。只有冻结后的安装版允许 `update.install`;开发版返回 `CONFLICT`。下载文件先写 `.part`,SHA256 与大小校验通过后才改为正式文件名。
+
 ## 5. 事件目录(backend → JS)
 
 前端统一 `bridge.on(name, cb)` 订阅。payload 均为对象。
@@ -243,6 +255,8 @@ bridge.event(name: string, payload: string)     // 前端 bridge.on(name, cb) �
 | `reminder.early` | `{tasks: ReminderTask[]}` | 提前提点,附加 `minutesLeft` |
 | `tasks.changed` | `{reason}` | 任务状态变化后广播。桥方法写入 `reason` 为动作名(`add/edit/action/reopen/...`),壳子定时器写入 `reminder/early/quiet`;前端收到后重拉 `tasks.list` 与统计 |
 | `settings.changed` | `{patch}` | `settings.set` 落盘后广播(含宠物窗在内的所有 view 订阅,用于同步主题/密度) |
+| `update.state` | `UpdateState` | 检查/下载/安装状态变化;启动自动检查也会推送,设置页挂载时另用 `update.get` 兜底 |
+| `update.progress` | `{jobId, received, total}` | 更新包下载进度,约每 256KB 一次 |
 | `pet.changed` | `{active, changed}` | 宠物形象变更(`pet.select` 或壳侧选图/去背景/还原完成后);设置页收到后重拉 `pet.gallery` |
 | `pet.say` | `{text}` | 壳子要求宠物窗显示气泡(宠物窗 HTML 订阅);2D 的 QLabel 气泡仍由壳子直接调用 |
 | `ui.navigate` | `{page}` | 壳子请求主窗切页(目前用于提醒卡的「打开待办 →」);前端收到后切换 side bar 选中页 |

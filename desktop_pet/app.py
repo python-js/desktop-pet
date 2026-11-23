@@ -15,7 +15,7 @@ from .bridge import BridgeHost
 from .core import (HORIZON_LABELS, REMIND_LIMIT, TaskStore, decode_response, in_quiet_hours,
                    local_day_bounds, parse_due, utc_now)
 from .platforms import data_directory, notify
-from . import dingtalk, knowledge, websearch
+from . import dingtalk, knowledge, update, websearch
 from .shell import ShellMixin, local_time
 from .ui.pet import Pet
 from .ui.reminder_popup import ReminderPopup
@@ -124,12 +124,29 @@ class AssistantWorker(QThread):
             self.failed.emit(str(exc) if isinstance(exc, ValueError) else '请求失败，请检查模型设置后重试。')
 
 
+INSTANCE_MUTEX_NAME = 'DesktopPetSingleInstance'
+_INSTANCE_MUTEX = None
+
+
+def hold_instance_mutex():
+    """Keep a named mutex alive so the Inno Setup installer can detect a running app."""
+    global _INSTANCE_MUTEX
+    if sys.platform != 'win32' or _INSTANCE_MUTEX:
+        return
+    try:
+        import ctypes
+        _INSTANCE_MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, INSTANCE_MUTEX_NAME)
+    except (AttributeError, OSError):
+        _INSTANCE_MUTEX = None
+
+
 class MainWindow(ShellMixin, QMainWindow):
     dingtalk_result = Signal(bool, str)
 
     def __init__(self, secret_store=None, startup_manager=None):
         super().__init__()
         self.root = data_directory()
+        self.updates = update.UpdateManager(self.root, __version__)
         self.store = TaskStore(self.root / 'desktop-pet.sqlite3')
         self.knowledge = knowledge.KnowledgeBase(self.root / 'knowledge')
         self.store.reset_notifications()
@@ -196,6 +213,7 @@ class MainWindow(ShellMixin, QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_due)
         self.timer.start(2000)
+        QTimer.singleShot(10000, self.auto_check_updates)
 
     def update_tray_menu(self):
         """Refresh stateful tray labels when the native menu opens."""
@@ -539,6 +557,79 @@ class MainWindow(ShellMixin, QMainWindow):
             event.ignore()
             self.quit_app()
 
+    def update_status(self):
+        return self.updates.status(self.settings.get('skipped_version', ''))
+
+    def auto_check_updates(self):
+        if not getattr(sys, 'frozen', False):
+            return
+        today = datetime.now().astimezone().date().isoformat()
+        if self.settings.get('last_update_check') == today:
+            return
+        self.settings['last_update_check'] = today
+        try:
+            self.persist_settings()
+        except OSError:
+            pass
+        self.check_updates_async()
+
+    def check_updates_async(self):
+        if not self.updates.begin_check():
+            return False
+        self.bridge.emit_event('update.state', self.update_status())
+
+        def work():
+            try:
+                self.updates.check()
+            except update.UpdateError as exc:
+                self.updates.fail(str(exc))
+            self.bridge.emit_event('update.state', self.update_status())
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def download_update(self, job_id='', cancel_event=None):
+        if not self.updates.begin_download():
+            return False
+        self.bridge.emit_event('update.state', self.update_status())
+
+        def progress(received, total):
+            self.updates.progress(received, total)
+            self.bridge.emit_event('update.progress', {
+                'jobId': job_id, 'received': received, 'total': total,
+            })
+
+        def work():
+            try:
+                self.updates.download(progress, cancel_event.is_set if cancel_event else None)
+            except update.UpdateCancelled:
+                self.updates.cancelled()
+            except (update.UpdateError, OSError) as exc:
+                self.updates.fail(str(exc))
+            finally:
+                self.bridge.emit_event('update.state', self.update_status())
+                if job_id:
+                    self.bridge.finish_job(job_id)
+
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def install_update(self):
+        if not getattr(sys, 'frozen', False):
+            raise update.UpdateError('当前为开发版，无法自动安装更新')
+        if not self.updates.ready_installer():
+            raise update.UpdateError('安装包尚未下载或校验失败')
+        if not self.updates.begin_install():
+            raise update.UpdateError('更新正在安装，请稍候')
+        log_path = self.root / 'updates' / 'install.log'
+        try:
+            update.spawn_installer(self.updates.setup_path, Path(sys.executable), log_path)
+        except (OSError, update.UpdateError) as exc:
+            self.updates.fail(f'无法启动安装程序：{exc}')
+            raise update.UpdateError('无法启动安装程序，请稍后重试') from None
+        self.bridge.emit_event('update.state', self.update_status())
+        QTimer.singleShot(600, self.quit_app)
+
     def quit_app(self):
         web_worker = getattr(self, 'web_chat_worker', None)
         if self.worker is not None or web_worker is not None:
@@ -563,6 +654,7 @@ def main():
         os.environ.setdefault('QTWEBENGINE_REMOTE_DEBUGGING', '127.0.0.1:9223')
     app = QApplication(sys.argv)
     app.setApplicationName('DesktopPet')
+    hold_instance_mutex()
     try:
         # WebShell 依赖 QtWebEngine;缺失时明确提示，而不是静默回退。
         from PySide6 import QtWebEngineWidgets  # noqa: F401

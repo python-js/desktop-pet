@@ -3,9 +3,13 @@ import {
   api,
   onConnectionTested,
   onPetChanged,
+  onUpdateProgress,
+  onUpdateState,
   PetGallery,
   SecretsStatus,
   Settings,
+  UpdateProgress,
+  UpdateState,
 } from '../api'
 import { BridgeError } from '../bridge/bridge'
 import {
@@ -25,6 +29,7 @@ export default function SettingsPage(props: {
   settings: Settings
   secrets: SecretsStatus
   dataDir: string
+  appVersion: string
   onSettings: (patch: Partial<Settings>) => void
 }) {
   return (
@@ -45,6 +50,7 @@ export default function SettingsPage(props: {
         <ReminderCard settings={props.settings} onSettings={props.onSettings} />
         <AppearanceCard settings={props.settings} onSettings={props.onSettings} />
         <DataCard dataDir={props.dataDir} />
+        <UpdateCard appVersion={props.appVersion} />
         <PetCard />
         <DingTalkCard secrets={props.secrets} />
       </div>
@@ -397,6 +403,119 @@ function DataCard(props: { dataDir: string }) {
           <Button danger onClick={() => void clearData()} disabled={busy}>清空数据</Button>
         </div>
         <StatusLine text={status} tone={tone} />
+      </Row>
+    </Card>
+  )
+}
+
+function formatSize(bytes: number): string {
+  return bytes > 0 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : '0 MB'
+}
+
+function UpdateCard(props: { appVersion: string }) {
+  const [state, setState] = useState<UpdateState | null>(null)
+  const [progress, setProgress] = useState<UpdateProgress | null>(null)
+  const [notice, setNotice] = useState('')
+  const [tone, setTone] = useState<'calm' | 'alert' | 'plain'>('plain')
+
+  useEffect(() => {
+    api.updateGet()
+      .then((next) => { setState(next); setProgress({ jobId: '', received: next.received, total: next.total }) })
+      .catch((err) => { setNotice(messageOf(err)); setTone('alert') })
+    const offState = onUpdateState((next) => {
+      setState(next)
+      setProgress({ jobId: '', received: next.received, total: next.total })
+    })
+    const offProgress = onUpdateProgress((next) => setProgress(next))
+    return () => { offState(); offProgress() }
+  }, [])
+
+  const manifest = state?.manifest ?? null
+  const downloading = state?.state === 'downloading'
+  const busy = state?.state === 'checking' || downloading || state?.state === 'installing'
+  const received = progress?.received ?? state?.received ?? 0
+  const total = progress?.total ?? state?.total ?? 0
+  const percent = total > 0 ? Math.min(100, Math.round(received * 100 / total)) : 0
+  const skipped = Boolean(manifest && state?.skippedVersion === manifest.version)
+
+  const check = async () => {
+    setTone('plain')
+    setNotice('')
+    try {
+      await api.updateCheck()
+    } catch (err) {
+      setTone('alert')
+      setNotice(messageOf(err))
+    }
+  }
+
+  const download = async () => {
+    setTone('plain')
+    setNotice('')
+    try {
+      await api.updateDownload()
+    } catch (err) {
+      setTone('alert')
+      setNotice(messageOf(err))
+    }
+  }
+
+  const install = async () => {
+    if (!window.confirm('应用将退出并安装新版本，完成后自动重启。继续？')) return
+    setTone('plain')
+    setNotice('')
+    try {
+      await api.updateInstall()
+    } catch (err) {
+      setTone('alert')
+      setNotice(messageOf(err))
+    }
+  }
+
+  const skip = async () => {
+    if (!manifest) return
+    try {
+      const { skippedVersion } = await api.updateSkip(manifest.version)
+      setState((prev) => prev ? { ...prev, skippedVersion } : prev)
+    } catch (err) {
+      setTone('alert')
+      setNotice(messageOf(err))
+    }
+  }
+
+  let summary = '尚未检查更新。'
+  if (state?.state === 'checking') summary = '正在检查更新…'
+  else if (state?.state === 'latest') summary = '已是最新版本。'
+  else if (state?.state === 'available' && manifest) summary = `发现新版本 ${manifest.version}。`
+  else if (downloading) summary = `正在下载 ${percent}%（${formatSize(received)} / ${formatSize(total)}）…`
+  else if (state?.state === 'ready' && manifest) summary = `新版本 ${manifest.version} 已下载并通过校验。`
+  else if (state?.state === 'installing') summary = '正在退出并安装新版本…'
+  else if (state?.state === 'error') summary = state.error || '更新操作失败。'
+
+  return (
+    <Card title="关于与更新" icon="download" desc="从 GitHub Releases 检查新版本；安装包校验通过后才会执行。">
+      <Row label={`当前版本 ${state?.currentVersion || props.appVersion}`} desc="更新会保留本机的设置、待办和知识库。">
+        <StatusLine text={summary} tone={state?.state === 'error' ? 'alert' : state?.state === 'latest' || state?.state === 'ready' ? 'calm' : 'plain'} />
+        {manifest?.notes && (state?.state === 'available' || state?.state === 'ready') && (
+          <p className="status-line" style={{ whiteSpace: 'pre-wrap' }}>{manifest.notes}</p>
+        )}
+        {skipped && state?.state === 'available' && <StatusLine text="启动检查已跳过此版本，仍可手动更新。" tone="plain" />}
+        <div className="btn-row">
+          <Button onClick={() => void check()} disabled={busy}>检查更新</Button>
+          {state?.state === 'available' && manifest && (
+            <Button primary onClick={() => void download()} disabled={busy}>下载更新</Button>
+          )}
+          {state?.state === 'ready' && (
+            <Button primary onClick={() => void install()} disabled={busy || !state.canInstall}>退出并安装</Button>
+          )}
+          {state?.state === 'available' && manifest && (
+            <Button ghost onClick={() => void skip()} disabled={busy || skipped}>跳过此版本</Button>
+          )}
+        </div>
+        {state && !state.canInstall && (
+          <StatusLine text="开发版不会自动安装更新；请下载安装包后手动运行。" tone="plain" />
+        )}
+        <StatusLine text={notice} tone={tone} />
       </Row>
     </Card>
   )

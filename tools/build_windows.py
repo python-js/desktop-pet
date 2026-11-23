@@ -18,6 +18,38 @@ from desktop_pet.version import __version__
 RUNTIME_PACKAGES = ('PySide6', 'PySide6_Essentials', 'PySide6_Addons', 'shiboken6')
 
 
+def find_iscc():
+    override = os.environ.get('INNO_SETUP_ISCC')
+    if override:
+        path = Path(override)
+        if path.is_file():
+            return path
+        raise SystemExit('INNO_SETUP_ISCC does not point to ISCC.exe.')
+    for base in (os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+                 os.environ.get('ProgramFiles', r'C:\Program Files')):
+        path = Path(base) / 'Inno Setup 6' / 'ISCC.exe'
+        if path.is_file():
+            return path
+    found = shutil.which('ISCC')
+    if found:
+        return Path(found)
+    raise SystemExit('Inno Setup 6 (ISCC.exe) not found; install it or set INNO_SETUP_ISCC.')
+
+
+def build_installer(iscc, application, output):
+    setup = output / f'DesktopPet-{__version__}-setup.exe'
+    subprocess.run([
+        str(iscc), '/Qp',
+        f'/DAppVersion={__version__}', f'/DAppSource={application}',
+        f'/O{output}', f'/FDesktopPet-{__version__}-setup',
+        str(ROOT / 'installer' / 'DesktopPet.iss'),
+    ], cwd=ROOT / 'installer', check=True)
+    if not setup.is_file():
+        raise SystemExit('Inno Setup did not produce the installer; do not distribute this build.')
+    return {'file': setup.name, 'sha256': hashlib.sha256(setup.read_bytes()).hexdigest(),
+            'size': setup.stat().st_size, 'signed': False}
+
+
 def build_command(output, work):
     return [sys.executable, '-m', 'PyInstaller', '--name', 'DesktopPet', '--windowed',
             '--onedir', '--clean',
@@ -72,6 +104,7 @@ def main():
             metadata.version(name)
     except metadata.PackageNotFoundError:
         raise SystemExit('Build dependencies missing. Run: .venv\\Scripts\\python.exe -m pip install -r requirements-build.txt')
+    iscc = find_iscc()
     # Unique paths avoid overwriting a previous verified build. No recursive deletion.
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     output = ROOT / 'dist' / f'windows-{__version__}-{stamp}'
@@ -101,14 +134,17 @@ def main():
         raise SystemExit('Packaged runtime verification failed; do not distribute this build.')
     write_licenses(application / 'licenses')
     shutil.copyfile(ROOT / 'docs' / 'WINDOWS_BUILD.md', application / 'WINDOWS_BUILD.md')
+    installer = build_installer(iscc, application, output)
     manifest = {'version': __version__, 'python': platform.python_version(),
                 'architecture': platform.machine(), 'signed': False,
                 'pyinstaller': metadata.version('PyInstaller'), 'smoke_test': result,
+                'installer': installer,
                 'files': {str(path.relative_to(application)): hashlib.sha256(path.read_bytes()).hexdigest()
                           for path in sorted(application.rglob('*')) if path.is_file()}}
     (output / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     archive = shutil.make_archive(str(output / f'DesktopPet-{__version__}-windows'), 'zip', output, 'DesktopPet')
-    print(f'Verified unsigned folder build: {application}\nArchive: {archive}\nManifest: {output / "manifest.json"}')
+    print(f'Verified unsigned folder build: {application}\nInstaller: {output / installer["file"]}\n'
+          f'Archive: {archive}\nManifest: {output / "manifest.json"}')
 
 
 if __name__ == '__main__':

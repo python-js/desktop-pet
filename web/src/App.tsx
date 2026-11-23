@@ -349,6 +349,7 @@ export default function App() {
             settings={settings}
             secrets={secrets}
             dataDir={info.dataDir}
+            appVersion={info.appVersion}
             onSettings={patchSettings}
           />
         </section>}
