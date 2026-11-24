@@ -42,14 +42,22 @@
 - 安装时应用正常退出，临时 PowerShell 助手等待进程结束，再以 `/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS` 运行安装包，成功后重启应用；失败则重新启动旧版本。日志在 `%LOCALAPPDATA%\DesktopPet\updates\install.log`。
 - 开发版只显示检查/下载结果，不执行安装；可用 `DESKTOP_PET_UPDATE_URL` 指向本地清单测试。
 
-发布步骤：先推送版本提交，再构建安装包，然后带 GitHub token 发布：
+发布步骤：先修改 `desktop_pet/version.py` 的版本号并提交推送，然后双击根目录的 `release.cmd` 一键发版。脚本依次执行：
+
+- 前置检查：`revision` 分支与远端同步、工作区干净、`v<版本>` 尚未发布、`GITHUB_TOKEN` 已在用户级环境变量（未设置时脚本会打印设置命令）。
+- 运行 `tests.test_update`，然后构建安装包并执行打包自检；任一步失败即停止，不发布。
+- 发布说明默认取上个 tag 以来的提交标题；存在 `docs/release-notes.md` 时改用该文件。
+- 创建 `v<版本>` Release（先 draft，上传安装包和 `latest.json` 后再发布），最后匿名核对线上清单与安装包的 SHA256/大小。
+- 失败留下的 draft 需人工确认后到 Releases 页面删除，再修改版本号重试。
+
+也可手动分步执行（等价）：
 
 ```powershell
 $env:GITHUB_TOKEN = '<具有 repo 权限的 token>'
 .\.venv\Scripts\python.exe tools\publish_release.py --notes-file docs\release-notes.md
 ```
 
-脚本会创建 `v<版本>` Release（先 draft，上传安装包和 `latest.json` 后再发布），清单写入安装包 SHA256 与大小。token 只用于发版机器，不进入仓库或安装包。`--dry-run` 只在本地产出 `latest.json`。
+token 只用于发版机器，不进入仓库或安装包。`--dry-run` 只在本地产出 `latest.json`。
 
 ## 验收边界
 
