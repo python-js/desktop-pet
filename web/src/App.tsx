@@ -94,9 +94,9 @@ export default function App() {
       const stored = localStorage.getItem('pet.railCollapsed')
       if (stored === '0' || stored === '1') return stored === '1'
     } catch {
-      // 本地存储不可用时退回窗口宽度判断。
+      // 本地存储不可用时默认展开。
     }
-    return window.innerWidth < 1280
+    return false
   })
 
   useEffect(() => {
@@ -332,6 +332,8 @@ export default function App() {
           <ChatPage
             onOpenTasks={() => navigate('tasks')}
             onOpenSettings={() => navigate('settings')}
+            settings={settings}
+            onSettings={patchSettings}
             active={page === 'chat'}
           />
         </section>}
@@ -354,7 +356,7 @@ export default function App() {
           />
         </section>}
         {visitedPages.has('knowledge') && <section className={`content-panel${page === 'knowledge' ? ' is-active' : ''}`} aria-hidden={page !== 'knowledge'}>
-          <KnowledgePage settings={settings} onSettings={patchSettings} active={page === 'knowledge'} />
+          <KnowledgePage settings={settings} active={page === 'knowledge'} />
         </section>}
       </main>
 

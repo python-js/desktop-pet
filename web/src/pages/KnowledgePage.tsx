@@ -6,7 +6,7 @@ import {
   onKnowledgeProgress, onKnowledgeVisionDone,
 } from '../api'
 import { BridgeError } from '../bridge/bridge'
-import { Button, Icon, Pill, StatusLine, Toggle } from '../ui'
+import { Button, Icon, Pill, StatusLine } from '../ui'
 
 const KNOWLEDGE_FILTER = '支持的资料 (*.pdf *.docx *.xlsx *.xlsm *.txt *.md *.markdown *.csv *.json *.log *.yaml *.yml);;所有文件 (*.*)'
 const ASSESSMENT_FILTER = 'Word 文档 (*.docx)'
@@ -68,8 +68,8 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 }
 
 export default function KnowledgePage(props: {
-  settings: { knowledge_enabled?: boolean; base_url?: string; model?: string }
-  onSettings: (patch: { knowledge_enabled?: boolean }) => void
+  settings: { base_url?: string; model?: string }
+  onSettings?: (patch: Record<string, unknown>) => void
   active: boolean
 }) {
   const [tab, setTab] = useState<Tab>('library')
@@ -405,8 +405,7 @@ export default function KnowledgePage(props: {
           {tab === 'library' ? <LibraryView
             docs={docs} selectedDoc={selectedDocument}
             onSelect={(doc) => setSelectedDoc(doc.doc_id)}
-            enabled={props.settings.knowledge_enabled ?? true} busy={busy} status={status} tone={tone}
-            onEnabled={(knowledge_enabled) => props.onSettings({ knowledge_enabled })}
+            busy={busy} status={status} tone={tone}
             onAddFiles={() => void addFiles()} onAddFolder={() => void addFolder()}
             onRebuild={() => { if (selectedDocument) void startJob(() => api.knowledgeRebuild(String(selectedDocument.doc_id)), `正在重建 ${selectedDocument.name}…`) }}
             onRemove={() => { if (selectedDocument && window.confirm(`移除“${selectedDocument.name}”？`)) void api.knowledgeRemove(String(selectedDocument.doc_id)).then(() => { setSelectedDoc(null); return refresh() }).catch((error) => { setStatus(messageOf(error)); setTone('alert') }) }}
@@ -460,11 +459,9 @@ function LibraryView(props: {
   docs: KnowledgeDoc[]
   selectedDoc: KnowledgeDoc | null
   onSelect: (doc: KnowledgeDoc) => void
-  enabled: boolean
   busy: boolean
   status: string
   tone: 'plain' | 'calm' | 'alert'
-  onEnabled: (value: boolean) => void
   onAddFiles: () => void
   onAddFolder: () => void
   onRebuild: () => void
@@ -481,13 +478,12 @@ function LibraryView(props: {
     <div className="knowledge-view">
       <section className="knowledge-welcome">
         <div className="knowledge-welcome-mark"><Icon name="book" size={20} /></div>
-        <div><h2>让资料成为可查的依据</h2><p>支持 Word、PDF、Excel 与文本。原文切块并建立本地全文索引，问答时只检索相关片段。</p></div>
+        <div><h2>让资料成为可查的依据</h2><p>支持 Word、PDF、Excel 与文本。原文切块并建立本地全文索引，问答时只检索相关片段。对话页可勾选「回答时查阅本地资料」。</p></div>
         <div className="knowledge-welcome-actions"><Button primary onClick={props.onAddFiles} disabled={props.busy}><Icon name="plus" size={14} />添加文件</Button><Button onClick={props.onAddFolder} disabled={props.busy}><Icon name="folder" size={14} />添加文件夹</Button></div>
       </section>
       <div className="knowledge-metrics">
         <div><span>资料</span><strong>{props.docs.length}</strong><small>份已导入</small></div>
         <div><span>索引段落</span><strong>{props.docs.reduce((sum, doc) => sum + (doc.page_count ?? 0), 0)}</strong><small>可供全文检索</small></div>
-        <div className="knowledge-toggle-metric"><span>对话检索</span><Toggle label="回答时查阅本地资料" checked={props.enabled} disabled={!props.docs.length && !props.enabled} onChange={props.onEnabled} /></div>
       </div>
       <section className="knowledge-section">
         <div className="knowledge-section-head"><div><h2>资料清单</h2><p>单文件不超过 30 MB；图片文字会标记为未识别，不纳入文本检索。</p></div><div className="knowledge-section-actions"><Button small onClick={props.onRebuild} disabled={props.busy || !props.selectedDoc}>重建所选</Button><Button small onClick={props.onRemove} disabled={props.busy || !props.selectedDoc}>移除所选</Button><Button small danger onClick={props.onClear} disabled={props.busy || !props.docs.length}>清空</Button></div></div>

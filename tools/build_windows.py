@@ -56,15 +56,23 @@ def build_installer(iscc, application, output):
 
 
 def build_command(output, work):
-    return [sys.executable, '-m', 'PyInstaller', '--name', 'DesktopPet', '--windowed',
-            '--onedir', '--clean',
-            '--icon', str(ROOT / 'assets' / 'app.ico'),
-            '--add-data', f'{ROOT / "web" / "dist"};web',
-            '--distpath', str(output), '--workpath', str(work / 'cache'),
-            '--specpath', str(work),
-            '--hidden-import', 'PySide6.QtWebEngineWidgets',
-            '--hidden-import', 'PySide6.QtWebEngineCore',
-            '--hidden-import', 'PySide6.QtWebChannel', str(ROOT / 'launch.py')]
+    command = [sys.executable, '-m', 'PyInstaller', '--name', 'DesktopPet', '--windowed',
+               '--onedir', '--clean',
+               '--icon', str(ROOT / 'assets' / 'app.ico'),
+               '--add-data', f'{ROOT / "web" / "dist"};web',
+               '--distpath', str(output), '--workpath', str(work / 'cache'),
+               '--specpath', str(work),
+               '--hidden-import', 'PySide6.QtWebEngineWidgets',
+               '--hidden-import', 'PySide6.QtWebEngineCore',
+               '--hidden-import', 'PySide6.QtWebChannel']
+    tavily = ROOT / 'desktop_pet' / 'bundled_tavily.key'
+    if tavily.is_file():
+        command.extend(['--add-data', f'{tavily};desktop_pet'])
+    default_pet = ROOT / 'desktop_pet' / 'assets' / 'default_pet.png'
+    if default_pet.is_file():
+        command.extend(['--add-data', f'{default_pet};desktop_pet/assets'])
+    command.append(str(ROOT / 'launch.py'))
+    return command
 
 
 def build_web():

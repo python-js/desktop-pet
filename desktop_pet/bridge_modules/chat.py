@@ -387,7 +387,7 @@ def _start(host, session_id, messages, web_query=None, knowledge_query=None,
                                   and websearch.wants_web_search(last)) else '')
         if knowledge_query is None:
             knowledge_query = (last if (_ready(window, 'knowledge_ready')
-                                        and settings.get('knowledge_enabled', True)) else '')
+                                        and settings.get('knowledge_enabled', False)) else '')
     tasks = [dict(row) for row in _store(host).pending()]
     factory = host.context.get('worker_factory')
     if factory is None:

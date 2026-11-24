@@ -1,5 +1,5 @@
 // Native primitives styled after the 0.31 Qt shell (paper/night tokens in styles.css).
-import { ReactNode, useLayoutEffect, useRef } from 'react'
+import { ReactNode, useLayoutEffect, useRef, useState } from 'react'
 
 export type IconName =
   | 'home' | 'chat' | 'tasks' | 'settings' | 'bell' | 'clock' | 'check'
@@ -133,17 +133,40 @@ export function Card(props: {
   desc: string
   icon: IconName
   children: ReactNode
+  collapsible?: boolean
+  defaultOpen?: boolean
 }) {
+  const collapsible = Boolean(props.collapsible)
+  const [open, setOpen] = useState(props.defaultOpen ?? !collapsible)
+  const head = (
+    <>
+      <span className="set-icon"><Icon name={props.icon} size={18} /></span>
+      <div className="set-card-copy">
+        <h2 className="set-title">{props.title}</h2>
+        <p className="set-desc">{props.desc}</p>
+      </div>
+      {collapsible && (
+        <span className={`set-card-chevron${open ? ' is-open' : ''}`} aria-hidden>
+          <Icon name="chevron-down" size={16} />
+        </span>
+      )}
+    </>
+  )
   return (
-    <section className="set-card">
-      <header className="set-card-head">
-        <span className="set-icon"><Icon name={props.icon} size={18} /></span>
-        <div>
-          <h2 className="set-title">{props.title}</h2>
-          <p className="set-desc">{props.desc}</p>
-        </div>
-      </header>
-      {props.children}
+    <section className={`set-card${collapsible && !open ? ' is-collapsed' : ''}`}>
+      {collapsible ? (
+        <button
+          type="button"
+          className="set-card-head set-card-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {head}
+        </button>
+      ) : (
+        <header className="set-card-head">{head}</header>
+      )}
+      {(!collapsible || open) && props.children}
     </section>
   )
 }

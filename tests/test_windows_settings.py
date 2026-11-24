@@ -133,7 +133,8 @@ class WindowsAdapterTests(unittest.TestCase):
 class ShellConfigTests(unittest.TestCase):
     def test_secret_restore_and_settings_never_store_plaintext(self):
         from desktop_pet.app import MainWindow
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}), \
+                patch('desktop_pet.bundled_secrets.bundled_tavily_key', return_value=''):
             secret = SecretStore(folder, synthetic_protector, supported=True)
             secret.save('https://a.example/v1', 'synthetic-key')
             secret.save_tavily('tvly-synthetic')

@@ -1,11 +1,14 @@
 """Local desktop pet interaction and screen placement."""
 import random
 import time
+from pathlib import Path
 from PySide6.QtCore import QEvent, Qt, QTimer, QSize, QRect
 from PySide6.QtGui import QColor, QCursor, QFontMetrics, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QMenu
 from ..animations import load_sequences
 from ..motion import CANVAS_SIZE, SUBJECT_SIZE, SUBJECT_BOTTOM
+
+_DEFAULT_PET_FILE = Path(__file__).resolve().parent.parent / 'assets' / 'default_pet.png'
 
 # 气泡可用区域：窗口 220×260，宠物头顶在 y≈100，底边停在 84，最多 3 行。
 BUBBLE_WIDTH = 210
@@ -45,7 +48,11 @@ def paint_default_pet(painter):
 
 
 def default_pet_image():
-    """Render the built-in pet to fill the canvas so motion and thumbnails keep its size."""
+    """Built-in fox image; fall back to the old vector pet if the asset is missing."""
+    if _DEFAULT_PET_FILE.is_file():
+        image = QImage(str(_DEFAULT_PET_FILE))
+        if not image.isNull():
+            return image.convertToFormat(QImage.Format_ARGB32_Premultiplied)
     image = QImage(256, 256, QImage.Format_ARGB32_Premultiplied)
     image.fill(Qt.transparent)
     painter = QPainter(image)
@@ -172,7 +179,7 @@ class Pet(QWidget):
             self.frame_index = index % len(sequence['frames'])
 
     def load_image(self, path):
-        self.pixmap = QPixmap(path) if path else QPixmap()
+        self.pixmap = QPixmap(path) if path else QPixmap.fromImage(default_pet_image())
         self.update()
 
     def enable_3d(self, persist=True):
@@ -439,8 +446,8 @@ class Pet(QWidget):
 
     def static_size(self):
         if self.pixmap.isNull():
-            # paint_default_pet 的内容范围，无上传图时作为尺寸基准。
-            return QSize(120, 123)
+            size = default_pet_image().size()
+            return size.scaled(165, 140, Qt.KeepAspectRatio) if not size.isEmpty() else QSize(120, 123)
         return self.pixmap.size().scaled(165, 140, Qt.KeepAspectRatio)
 
     def paintEvent(self, event):
@@ -466,7 +473,10 @@ class Pet(QWidget):
                 top = 65 + (140 - image.height()) // 2
             painter.drawPixmap((190 - image.width()) // 2, top, image)
         else:
-            paint_default_pet(painter)
+            image = QPixmap.fromImage(default_pet_image()).scaled(
+                165, 140, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            top = 65 + (140 - image.height()) // 2
+            painter.drawPixmap((190 - image.width()) // 2, top, image)
 
     def enterEvent(self, event):
         self.set_hover(True)

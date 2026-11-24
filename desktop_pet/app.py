@@ -210,8 +210,7 @@ class MainWindow(ShellMixin, QMainWindow):
                                   QSystemTrayIcon.Warning, 8000)
         self.pet = Pet(self)
         image_path = self.settings.get('pet_image', '')
-        if image_path and Path(image_path).is_file():
-            self.pet.load_image(image_path)
+        self.pet.load_image(image_path if image_path and Path(image_path).is_file() else '')
         self.pet.show()
         QApplication.instance().screenRemoved.connect(self.pet.ensure_visible)
         self.timer = QTimer(self)

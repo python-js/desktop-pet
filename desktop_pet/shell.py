@@ -50,7 +50,7 @@ class ShellMixin:
             pass
         for key, default in (('early_nudge', True), ('sound_enabled', True),
                              ('auto_postpone', False), ('dnd_enabled', True),
-                             ('web_search_enabled', True), ('knowledge_enabled', True)):
+                             ('web_search_enabled', True), ('knowledge_enabled', False)):
             if not isinstance(self.settings.get(key), bool):
                 self.settings[key] = default
         for key, default in (('dnd_start', DEFAULT_DND_START), ('dnd_end', DEFAULT_DND_END)):
@@ -81,11 +81,14 @@ class ShellMixin:
                     self.settings_warning = '没有找到此服务的安全密钥，请重新输入。'
             except (OSError, ValueError):
                 self.settings_warning = '安全密钥未能恢复，请重新输入；原文件未自动删除。'
-        self.settings['tavily_key'] = ''
-        try:
-            self.settings['tavily_key'] = self.secret_store.load_tavily()
-        except (OSError, ValueError):
-            self.settings_warning += ' Tavily 密钥未能恢复，请重新输入。'
+        # 内置密钥优先；无内置文件时才回退到用户旧 DPAPI 密钥。
+        from .bundled_secrets import bundled_tavily_key
+        self.settings['tavily_key'] = bundled_tavily_key()
+        if not self.settings['tavily_key']:
+            try:
+                self.settings['tavily_key'] = self.secret_store.load_tavily()
+            except (OSError, ValueError):
+                self.settings_warning += ' Tavily 密钥未能恢复，请检查内置 bundled_tavily.key。'
         self.dingtalk_webhook = ''
         self.dingtalk_secret = ''
         try:

@@ -2,12 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom'
 import {
   api, AssistantResult, AssistantState, ChatMessage, ChatPlanPreview, ChatSession,
-  ChatSessionPayload, ChatSnapshot, Draft, KnowledgeHit, PlanResult, SearchSource, Task,
+  ChatSessionPayload, ChatSnapshot, Draft, KnowledgeHit, PlanResult, SearchSource, Settings, Task,
   onAssistantChunk, onAssistantFailed, onAssistantResult, onAssistantState,
   onChatChanged, onPlanResult, onTasksChanged,
 } from '../api'
 import { fetchCached, invalidateCache, isFresh, readCache, writeCache } from '../queryCache'
-import { Button, Icon, Paw, Pill } from '../ui'
+import { Button, Icon, Paw, Pill, Toggle } from '../ui'
 import { formatClock, formatDue, isToday, REPEAT_LABELS } from '../tasks'
 import Markdown from '../components/Markdown'
 import LatticeLoader from '../components/LatticeLoader'
@@ -77,6 +77,8 @@ function formatSnapshotTime(iso: string): string {
 export default function ChatPage(props: {
   onOpenTasks: () => void
   onOpenSettings: () => void
+  settings: Settings
+  onSettings: (patch: Partial<Settings>) => void
   active?: boolean
 }) {
   const initialSessionId = readCache<string>('chat.activeSession') ?? ''
@@ -705,7 +707,11 @@ export default function ChatPage(props: {
               }}
             />
             <div className="composer-foot">
-              <Pill>{payload?.hasModel ? '模型聊天' : '本地规则'}</Pill>
+              <Toggle
+                label="回答时查阅本地资料"
+                checked={props.settings.knowledge_enabled ?? false}
+                onChange={(knowledge_enabled) => props.onSettings({ knowledge_enabled })}
+              />
               <span className={`composer-status${notice ? ' status-line alert' : ''}`}>
                 {notice || status}
               </span>

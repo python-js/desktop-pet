@@ -32,6 +32,10 @@ PDF_MAX_IMAGES = 40
 PDF_MAX_VISION = 24
 CAPTION_CHARS = 200
 _IMAGE_TOKEN = re.compile(r'\[\[img:([0-9a-f]{16,64})\]\]')
+# 模型按提示声明未命中时，不再把检索块里的配图硬接到文末。
+_NO_HIT_REPLY = re.compile(
+    r'未找到|没有找到|找不到|未能找到|资料不足|无关|没有相关|无相关资料|'
+    r'知识库中没有|本地资料中没有|无法从(?:本地)?(?:知识库|资料)')
 WIKI_SYSTEM = ('你是知识库编辑。把用户提供的资料整理成结构化 Markdown 笔记。'
                '只输出 Markdown 正文，不要输出代码块围栏，不要编造资料中没有的事实。'
                '保留关键数字、结论、步骤、专有名词和资料中的明确限制。')
@@ -355,7 +359,7 @@ def _image_ids(text):
 def attach_missed_images(reply, hits, limit=4):
     """模型没插入配图记号时，把本次命中的图附在回答末尾。"""
     reply = str(reply or '')
-    if '[[img:' in reply:
+    if '[[img:' in reply or _NO_HIT_REPLY.search(reply):
         return reply
     ids = []
     for hit in hits or []:

@@ -6,6 +6,9 @@ build/
 dist/
 .artifacts/
 
+# Packaged Tavily key (copy from bundled_tavily.key.example).
+desktop_pet/bundled_tavily.key
+
 web/node_modules/
 web/dist/
 node_modules

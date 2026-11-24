@@ -21,10 +21,6 @@ function messageOf(err: unknown): string {
   return err instanceof BridgeError || err instanceof Error ? err.message : '操作失败，请重试。'
 }
 
-function fileName(path: string): string {
-  return path.split(/[\\/]/).pop() || path
-}
-
 export default function SettingsPage(props: {
   settings: Settings
   secrets: SecretsStatus
@@ -45,14 +41,14 @@ export default function SettingsPage(props: {
         </div>
       </header>
       <div className="settings-page">
+        <PetCard />
+        <AppearanceCard settings={props.settings} onSettings={props.onSettings} />
         <ModelCard settings={props.settings} secrets={props.secrets} onSettings={props.onSettings} />
         <WebSearchCard settings={props.settings} secrets={props.secrets} onSettings={props.onSettings} />
         <ReminderCard settings={props.settings} onSettings={props.onSettings} />
-        <AppearanceCard settings={props.settings} onSettings={props.onSettings} />
+        <DingTalkCard secrets={props.secrets} />
         <DataCard dataDir={props.dataDir} />
         <UpdateCard appVersion={props.appVersion} />
-        <PetCard />
-        <DingTalkCard secrets={props.secrets} />
       </div>
     </div>
   )
@@ -130,7 +126,7 @@ function ModelCard(props: {
   }
 
   return (
-    <Card title="模型与对话" icon="chat" desc="接支持 Chat Completions 的服务。模型留空时走本地规则，一样能记事。">
+    <Card collapsible title="模型与对话" icon="chat" desc="接支持 Chat Completions 的服务。模型留空时走本地规则，一样能记事。">
       <Row label="服务地址" desc="OpenAI 兼容端点">
         <TextInput
           value={baseUrl}
@@ -175,74 +171,15 @@ function WebSearchCard(props: {
   secrets: SecretsStatus
   onSettings: (patch: Partial<Settings>) => void
 }) {
-  const [key, setKey] = useState('')
-  const [status, setStatus] = useState(
-    props.secrets.hasTavily ? 'Tavily 密钥已载入。' : '尚未配置 Tavily 密钥；配置后默认自动联网。',
-  )
-  const [tone, setTone] = useState<'calm' | 'alert' | 'plain'>('plain')
-  const [testing, setTesting] = useState(false)
-  const jobId = useRef('')
-
-  useEffect(() => onConnectionTested((result) => {
-    if (result.jobId !== jobId.current) return
-    setTesting(false)
-    setStatus(result.message)
-    setTone(result.ok ? 'calm' : 'alert')
-  }), [])
-
-  const save = async () => {
-    try {
-      await api.saveTavily(key.trim())
-      await api.setSettings({ web_search_enabled: props.settings.web_search_enabled ?? true })
-      setStatus(key.trim() ? '联网搜索设置已保存；密钥由当前 Windows 用户加密保存。' : '已清除 Tavily 密钥，联网搜索关闭。')
-      setTone('calm')
-      setKey('')
-    } catch (err) {
-      setStatus(messageOf(err))
-      setTone('alert')
-    }
-  }
-
-  const test = async () => {
-    const value = key.trim()
-    if (!value && !props.secrets.hasTavily) {
-      setStatus('请先填写 Tavily API Key。')
-      setTone('alert')
-      return
-    }
-    setTesting(true)
-    setStatus('正在测试 Tavily 连接（会消耗 1 credit）…')
-    setTone('plain')
-    try {
-      const { jobId: id } = await api.testConnection('tavily', value ? { value } : {})
-      jobId.current = id
-    } catch (err) {
-      setTesting(false)
-      setStatus(messageOf(err))
-      setTone('alert')
-    }
-  }
-
   return (
-    <Card title="联网搜索" icon="search" desc="接入 Tavily 查实时资料；只发送当前问题，不发送对话历史和待办。">
-      <Row label="Tavily API Key" desc="在 tavily.com 创建，形如 tvly-…">
-        <TextInput
-          value={key}
-          password
-          placeholder={props.secrets.hasTavily ? '已保存（输入新值可替换）' : '仅用于 Tavily 搜索'}
-          onChange={setKey}
-        />
+    <Card collapsible title="联网搜索" icon="search" desc="接入 Tavily 查实时资料；只发送当前问题，不发送对话历史和待办。密钥已内置，无需填写。">
+      <Row label="自动联网" desc={props.secrets.hasTavily ? '内置密钥已就绪。' : '未找到内置密钥，请向发布包加入 bundled_tavily.key。'}>
         <Toggle
           label="自动联网查资料"
-          desc="命中查资料类问题且已配置密钥时先搜索；每次消耗 1 credit。"
+          desc="命中查资料类问题时先搜索；每次消耗 1 credit。"
           checked={props.settings.web_search_enabled ?? true}
           onChange={(checked) => props.onSettings({ web_search_enabled: checked })}
         />
-        <div className="btn-row">
-          <Button primary onClick={() => void save()}>保存</Button>
-          <Button onClick={() => void test()} disabled={testing}>测试连接</Button>
-        </div>
-        <StatusLine text={status} tone={tone} />
       </Row>
     </Card>
   )
@@ -278,7 +215,7 @@ function ReminderCard(props: { settings: Settings; onSettings: (patch: Partial<S
   const dndOn = props.settings.dnd_enabled ?? true
 
   return (
-    <Card title="提醒与免打扰" icon="bell" desc="桌面气泡是主通道，钉钉只是备份。">
+    <Card collapsible title="提醒与免打扰" icon="bell" desc="桌面气泡是主通道，钉钉只是备份。">
       <Row label="提醒方式" desc="到点后弹桌面气泡，不抢焦点。">
         <Toggle
           label="提前 10 分钟轻轻提点"
@@ -333,9 +270,10 @@ function ReminderCard(props: { settings: Settings; onSettings: (patch: Partial<S
 function AppearanceCard(props: { settings: Settings; onSettings: (patch: Partial<Settings>) => void }) {
   const theme = useTheme()
   return (
-    <Card title="外观与密度" icon="sun" desc="主题与列表密度即时生效，只影响这台电脑。">
+    <Card collapsible title="外观与密度" icon="sun" desc="主题与列表密度即时生效，只影响这台电脑。">
       <Row label="主题" desc="纸白适合白天，夜幕降低夜间亮度。">
         <Segmented
+          variant="compact"
           options={[{ key: 'light', label: '纸白' }, { key: 'dark', label: '夜幕' }] as const}
           value={theme}
           onChange={setTheme}
@@ -343,6 +281,7 @@ function AppearanceCard(props: { settings: Settings; onSettings: (patch: Partial
       </Row>
       <Row label="密度" desc="宽松更清晰，紧凑一屏看更多。">
         <Segmented
+          variant="compact"
           options={[{ key: 'comfortable', label: '宽松' }, { key: 'compact', label: '紧凑' }] as const}
           value={props.settings.density ?? 'comfortable'}
           onChange={(value) => props.onSettings({ density: value })}
@@ -394,7 +333,7 @@ function DataCard(props: { dataDir: string }) {
   }
 
   return (
-    <Card title="数据与隐私" icon="database" desc="待办和对话都在本机，不上传；导出不含密钥。">
+    <Card collapsible title="数据与隐私" icon="database" desc="待办和对话都在本机，不上传；导出不含密钥。">
       <Row label="存放位置" desc="所有数据都在这个目录；清空前会先自动备份。">
         <p className="mono-path" title={props.dataDir}>{props.dataDir}</p>
         <div className="btn-row">
@@ -493,7 +432,7 @@ function UpdateCard(props: { appVersion: string }) {
   else if (state?.state === 'error') summary = state.error || '更新操作失败。'
 
   return (
-    <Card title="关于与更新" icon="download" desc="从 GitHub Releases 检查新版本；安装包校验通过后才会执行。">
+    <Card collapsible title="关于与更新" icon="download" desc="从 GitHub Releases 检查新版本；安装包校验通过后才会执行。">
       <Row label={`当前版本 ${state?.currentVersion || props.appVersion}`} desc="更新会保留本机的设置、待办和知识库。">
         <StatusLine text={summary} tone={state?.state === 'error' ? 'alert' : state?.state === 'latest' || state?.state === 'ready' ? 'calm' : 'plain'} />
         {manifest?.notes && (state?.state === 'available' || state?.state === 'ready') && (
@@ -595,22 +534,19 @@ function PetCard() {
   const defaultActive = !gallery?.active
   const tiles: { key: string; thumb: string; label: string; active: boolean }[] = [
     { key: '', thumb: gallery?.defaultThumb ?? '', label: '默认形象', active: defaultActive },
-    ...(gallery?.items ?? []).map((item) => ({
-      key: item.image, thumb: item.thumb, label: fileName(item.image), active: item.active,
+    ...(gallery?.items ?? []).map((item, index) => ({
+      key: item.image, thumb: item.thumb, label: `形象 ${index + 1}`, active: item.active,
     })),
   ]
 
   return (
-    <Card title="宠物形象" icon="image" desc="2D 使用这张图片，3D 使用内置形象，可在桌面右键切换。">
+    <Card collapsible defaultOpen title="宠物形象" icon="image" desc="2D 使用这张图片，3D 使用内置形象，可在桌面右键切换。">
       <Row label="正在使用" desc="桌面上就是这一只。">
         {!gallery ? (
           <p className="status-line">正在读取形象…</p>
         ) : (
           <div className="pet-preview">
             <img src={gallery.preview || gallery.defaultThumb} alt="当前宠物形象" />
-            <span className="status-line" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }} title={gallery.active || '默认形象'}>
-              {gallery.active ? fileName(gallery.active) : '默认形象'}
-            </span>
           </div>
         )}
         <div className="pet-tiles">
@@ -717,7 +653,7 @@ function DingTalkCard(props: { secrets: SecretsStatus }) {
   }
 
   return (
-    <Card title="钉钉群通知" icon="send" desc="只有明确标了「钉钉通知」的待办，到期才推群。">
+    <Card collapsible title="钉钉群通知" icon="send" desc="只有明确标了「钉钉通知」的待办，到期才推群。">
       <Row label="群机器人" desc="Webhook 与加签密钥由当前 Windows 用户加密保存，不写入设置文件。">
         <TextInput
           value={webhook}

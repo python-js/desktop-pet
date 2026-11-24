@@ -231,6 +231,12 @@ class PdfImageTests(unittest.TestCase):
         kept = f'1. 打开设置。\n\n[[img:{image_id}]]'
         self.assertEqual(attach_missed_images(kept, hits), kept)
 
+    def test_missed_images_skipped_when_reply_says_not_found(self):
+        image_id = 'd' * 24
+        hits = [{'text': f'无关界面。\n[[img:{image_id}]]'}]
+        reply = '本地知识库中没有金价相关资料，未找到可用数据。'
+        self.assertEqual(attach_missed_images(reply, hits), reply)
+
     def test_context_tells_the_model_to_copy_image_tokens(self):
         image_id = 'c' * 24
         context = format_context([{
