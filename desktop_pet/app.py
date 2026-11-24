@@ -142,6 +142,7 @@ def hold_instance_mutex():
 
 class MainWindow(ShellMixin, QMainWindow):
     dingtalk_result = Signal(bool, str)
+    update_announce = Signal(object)
 
     def __init__(self, secret_store=None, startup_manager=None):
         super().__init__()
@@ -159,12 +160,14 @@ class MainWindow(ShellMixin, QMainWindow):
         self.reminder_popups = {}
         self.settings = {}
         self.shutting_down = False
+        self.update_notice_pending = False
         self._hidden_at = None
         self.load_configuration(secret_store, startup_manager)
         self.theme = self.settings.get('theme', 'light')
         if QApplication.instance() is not None:
             apply_theme(QApplication.instance(), self.theme)
         self.dingtalk_result.connect(self.show_dingtalk_result)
+        self.update_announce.connect(self.announce_update)
         session_ids = {s['id'] for s in self.store.sessions()}
         self.active_session = self.settings.get('active_session', 'default')
         if self.active_session not in session_ids:
@@ -199,6 +202,7 @@ class MainWindow(ShellMixin, QMainWindow):
         menu.aboutToShow.connect(self.update_tray_menu)
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(lambda reason: self.show_main() if reason == QSystemTrayIcon.DoubleClick else None)
+        self.tray.messageClicked.connect(self.on_tray_message_clicked)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
         if self.settings_warning:
@@ -214,6 +218,10 @@ class MainWindow(ShellMixin, QMainWindow):
         self.timer.timeout.connect(self.check_due)
         self.timer.start(2000)
         QTimer.singleShot(10000, self.auto_check_updates)
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.auto_check_updates)
+        # 长驻进程不会重启，周期触发配合按日护栏即可每天补检一次。
+        self.update_timer.start(6 * 60 * 60 * 1000)
 
     def update_tray_menu(self):
         """Refresh stateful tray labels when the native menu opens."""
@@ -440,6 +448,7 @@ class MainWindow(ShellMixin, QMainWindow):
     def announce_due(self, task, final):
         self.pet.play_action('reminder')
         if not self.pet.isVisible():
+            self.update_notice_pending = False
             notify(self.tray, '待办提醒', task['title'])
         if self.settings.get('sound_enabled', True):
             QApplication.beep()
@@ -510,6 +519,7 @@ class MainWindow(ShellMixin, QMainWindow):
 
     def show_dingtalk_result(self, ok, message):
         if not ok:
+            self.update_notice_pending = False
             notify(self.tray, '钉钉通知失败', message)
 
     def toggle_pet(self):
@@ -563,6 +573,8 @@ class MainWindow(ShellMixin, QMainWindow):
     def auto_check_updates(self):
         if not getattr(sys, 'frozen', False):
             return
+        if self.update_status()['state'] in ('downloading', 'installing', 'ready'):
+            return
         today = datetime.now().astimezone().date().isoformat()
         if self.settings.get('last_update_check') == today:
             return
@@ -571,9 +583,9 @@ class MainWindow(ShellMixin, QMainWindow):
             self.persist_settings()
         except OSError:
             pass
-        self.check_updates_async()
+        self.check_updates_async(notify=True)
 
-    def check_updates_async(self):
+    def check_updates_async(self, notify=False):
         if not self.updates.begin_check():
             return False
         self.bridge.emit_event('update.state', self.update_status())
@@ -583,10 +595,36 @@ class MainWindow(ShellMixin, QMainWindow):
                 self.updates.check()
             except update.UpdateError as exc:
                 self.updates.fail(str(exc))
-            self.bridge.emit_event('update.state', self.update_status())
+            status = self.update_status()
+            self.bridge.emit_event('update.state', status)
+            if notify:
+                self.update_announce.emit(status)
 
         threading.Thread(target=work, daemon=True).start()
         return True
+
+    def announce_update(self, status):
+        if not update.should_announce(status, self.settings.get('skipped_version', ''),
+                                      self.settings.get('update_notified_version', '')):
+            return
+        if not (self.tray.isVisible() and self.tray.supportsMessages()):
+            return
+        version = status['manifest']['version']
+        self.update_notice_pending = True
+        self.tray.showMessage('发现新版本', f'v{version} 已发布，点击打开设置页下载安装。',
+                              QSystemTrayIcon.MessageIcon.Information, 10000)
+        self.settings['update_notified_version'] = version
+        try:
+            self.persist_settings()
+        except OSError:
+            pass
+
+    def on_tray_message_clicked(self):
+        if not self.update_notice_pending:
+            return
+        self.update_notice_pending = False
+        self.show_main()
+        self.bridge.emit_event('ui.navigate', {'page': 'settings'})
 
     def download_update(self, job_id='', cancel_event=None):
         if not self.updates.begin_download():

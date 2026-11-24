@@ -73,6 +73,13 @@ def is_newer(remote, current):
     return version_tuple(remote) > version_tuple(current)
 
 
+def should_announce(status, skipped_version='', notified_version=''):
+    manifest = status.get('manifest') or {}
+    version = manifest.get('version')
+    return bool(status.get('state') == 'available' and version
+                and version not in (skipped_version, notified_version))
+
+
 def parse_manifest(payload):
     if not isinstance(payload, dict):
         raise UpdateError('更新清单格式无效')

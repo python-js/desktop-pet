@@ -194,5 +194,57 @@ class ShellConfigTests(unittest.TestCase):
                 QT_APP.processEvents()
 
 
+class UpdateNoticeTests(unittest.TestCase):
+    def test_announce_once_and_click_navigates_to_settings(self):
+        class FakeTray:
+            def __init__(self):
+                self.messages = []
+
+            def isVisible(self):
+                return True
+
+            def supportsMessages(self):
+                return True
+
+            def showMessage(self, *args):
+                self.messages.append(args)
+
+        from desktop_pet.app import MainWindow
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'DESKTOP_PET_DATA_DIR': folder}):
+            window = MainWindow()
+            window.timer.stop()
+            window.update_timer.stop()
+            real_tray, window.tray = window.tray, FakeTray()
+            try:
+                self.assertEqual(window.update_timer.interval(), 6 * 60 * 60 * 1000)
+                status = {'state': 'available', 'manifest': {'version': '9.9.9'}}
+                window.announce_update(status)
+                window.announce_update(status)
+                self.assertEqual(len(window.tray.messages), 1)
+                self.assertEqual(window.settings['update_notified_version'], '9.9.9')
+                with patch.object(window, 'show_main') as show, patch.object(window.bridge, 'emit_event') as emit:
+                    window.on_tray_message_clicked()
+                show.assert_called_once()
+                emit.assert_called_once_with('ui.navigate', {'page': 'settings'})
+                with patch.object(window, 'show_main') as show_again:
+                    window.on_tray_message_clicked()
+                show_again.assert_not_called()
+                window.settings['update_notified_version'] = ''
+                window.settings['skipped_version'] = '9.9.9'
+                window.announce_update(status)
+                self.assertEqual(len(window.tray.messages), 1)
+            finally:
+                window.tray = real_tray
+                window.timer.stop()
+                window.update_timer.stop()
+                window.shutting_down = True
+                window.pet.close()
+                window.tray.hide()
+                window.close()
+                window.store.close()
+                window.deleteLater()
+                QT_APP.processEvents()
+
+
 if __name__ == '__main__':
     unittest.main()

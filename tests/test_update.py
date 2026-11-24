@@ -104,6 +104,16 @@ class SpawnTests(unittest.TestCase):
             self.assertTrue(flags & getattr(update.subprocess, 'CREATE_NO_WINDOW', 0))
 
 
+class AnnounceTests(unittest.TestCase):
+    def test_should_announce_only_unseen_available_versions(self):
+        status = {'state': 'available', 'manifest': {'version': '0.33.0'}}
+        self.assertTrue(update.should_announce(status))
+        self.assertFalse(update.should_announce(status, skipped_version='0.33.0'))
+        self.assertFalse(update.should_announce(status, notified_version='0.33.0'))
+        self.assertFalse(update.should_announce({'state': 'latest', 'manifest': None}))
+        self.assertFalse(update.should_announce({'state': 'available', 'manifest': None}))
+
+
 class ManagerTests(unittest.TestCase):
     def test_check_marks_available_and_busy_guards(self):
         with tempfile.TemporaryDirectory() as folder:

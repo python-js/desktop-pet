@@ -38,7 +38,8 @@
 `https://github.com/python-js/desktop-pet/releases/latest/download/latest.json`
 
 - `latest.json` 声明 `version`、`installer.url/sha256/size` 与更新说明；安装包必须是 HTTPS 地址。
-- 打包版启动 10 秒后每天检查一次；设置页可手动检查。发现新版本后由用户确认下载，SHA256 与大小校验通过才允许安装。
+- 打包版启动 10 秒后检查一次，并每 6 小时补检（每天最多一次）；设置页可手动检查。发现新版本后由用户确认下载，SHA256 与大小校验通过才允许安装。
+- 检查到新版本时弹托盘气泡提示（同一版本只提醒一次，忽略该版本后不再提醒）；点击气泡打开主窗口并直达设置页。
 - 安装时应用正常退出，临时 PowerShell 助手等待进程结束，再以 `/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS` 运行安装包，成功后重启应用；失败则重新启动旧版本。日志在 `%LOCALAPPDATA%\DesktopPet\updates\install.log`。
 - 开发版只显示检查/下载结果，不执行安装；可用 `DESKTOP_PET_UPDATE_URL` 指向本地清单测试。
 
