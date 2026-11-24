@@ -64,21 +64,27 @@ def read_token():
     return str(token).strip()
 
 
-def http_json(url, timeout=30):
-    request = urllib.request.Request(url, headers={
-        'User-Agent': USER_AGENT, 'Accept': 'application/vnd.github+json',
-        'Cache-Control': 'no-cache'})
+def http_json(url, timeout=30, token=None):
+    headers = {'User-Agent': USER_AGENT, 'Accept': 'application/vnd.github+json',
+               'Cache-Control': 'no-cache'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read() or b'{}')
 
 
-def fetch_release(version):
+def fetch_release(version, token=None):
     try:
-        return http_json(f'{API}/releases/tags/v{version}')
+        return http_json(f'{API}/releases/tags/v{version}', token=token)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None
         raise RuntimeError(f'查询 v{version} 发布状态失败（HTTP {exc.code}），请检查网络后重试。')
+
+
+def tag_exists(version):
+    return bool(git('ls-remote', '--tags', 'origin', f'refs/tags/v{version}').strip())
 
 
 def preflight():
@@ -103,7 +109,7 @@ def preflight():
         dirty = git('status', '--porcelain').strip()
         if dirty:
             return '工作区不干净，先提交或还原改动：\n' + dirty
-        if fetch_release(__version__):
+        if tag_exists(__version__):
             return f'v{__version__} 已发布。先修改 desktop_pet/version.py 并提交推送后再发版。'
     except (RuntimeError, urllib.error.URLError) as exc:
         return str(exc)
@@ -150,12 +156,12 @@ def run_publish(notes, token):
         Path(path).unlink(missing_ok=True)
 
 
-def verify(installer):
+def verify(installer, token):
     digest = hashlib.sha256(installer.read_bytes()).hexdigest()
     size = installer.stat().st_size
     release = None
     for _ in range(12):
-        release = fetch_release(__version__)
+        release = fetch_release(__version__, token)
         if release and not release.get('draft'):
             break
         time.sleep(5)
@@ -224,7 +230,10 @@ def main():
     say(f'安装包：{installer}')
     if run_publish(notes, token) != 0:
         return fail('发布失败。若已生成 draft，请到 Releases 页面确认并删除后重试。')
-    problem = verify(installer)
+    try:
+        problem = verify(installer, token)
+    except Exception as exc:
+        return fail(f'发布后校验出错（Release 已发布，请人工核对）：{exc}')
     if problem:
         return fail(problem)
     say()
