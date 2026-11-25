@@ -191,6 +191,7 @@ class MainWindow(ShellMixin, QMainWindow):
         self.bridge.emit_event('app.launched', {'version': __version__, 'theme': self.theme,
                                                 'shell': 'web'})
         self.tray = QSystemTrayIcon(icon, self)
+        self.tray.setToolTip('小满桌面助手')
         menu = QMenu(self)
         menu.addSection('小满桌面助手')
         menu.addAction('打开主界面', self.show_main)

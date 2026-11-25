@@ -85,14 +85,23 @@
   let dragging = false;
   let dragAmount = 0;
   let reactUntil = 0;
-  let runActive = false;
-  let runUntil = 0;
-  let runDuration = 1.2;
+  let busyUntil = 0;
+  let reactDuration = 1.2;
+  let deathDuration = 1.2;
+  let eatingDuration = 1.2;
   let walking = false;
   let walkDir = 1;
-  const REACT_DURATION = 0.9;
+  let walkGait = 'walk';
+  let pendingPause = false;
+  let idleSince = 0;
+  let nextEatAt = 8 + Math.random() * 12;
+  const REACT_HOP = 0.9;
   const REST_YAW = 0.35;
   const WALK_YAW = 0.62;
+  const ONCE = {
+    Gallop_Jump: true, Attack: true, Eating: true, Death: true,
+    Jump_ToIdle: true, Idle_HitReact_Left: true, Idle_HitReact_Right: true
+  };
   let walkAmount = 0;
   let walkYaw = REST_YAW;
   pet.rotation.y = REST_YAW;
@@ -123,17 +132,24 @@
 
     mixer = new THREE.AnimationMixer(model);
     gltf.animations.forEach(function (clip) {
+      // 跳过 AnimalArmature| 重名副本，只用短名剪辑。
+      if (String(clip.name || '').indexOf('|') >= 0) { return; }
       const action = mixer.clipAction(clip);
-      if (clip.name === 'Gallop_Jump') {
+      if (ONCE[clip.name]) {
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
-        runDuration = clip.duration;
       }
+      if (clip.name === 'Gallop_Jump' || clip.name === 'Attack') {
+        reactDuration = Math.max(reactDuration, clip.duration);
+      }
+      if (clip.name === 'Death') { deathDuration = clip.duration; }
+      if (clip.name === 'Eating') { eatingDuration = clip.duration; }
       actions[clip.name] = action;
     });
 
     ready = true;
     shadow.visible = true;
+    idleSince = 0;
     playAction('Idle', 0);
     if (paused) { renderer.render(scene, camera); }
   }, function (error) {
@@ -142,10 +158,10 @@
 
   function playAction(name, fade) {
     const next = actions[name];
-    if (!next) { return; }
+    if (!next) { return false; }
     if (name === currentName) {
-      if (name === 'Gallop_Jump') { next.reset(); next.play(); }
-      return;
+      if (ONCE[name]) { next.reset(); next.play(); }
+      return true;
     }
     const prev = actions[currentName];
     next.reset();
@@ -158,11 +174,32 @@
       prev.stop();
     }
     currentName = name;
+    return true;
+  }
+
+  function busy() {
+    return elapsed < busyUntil || pendingPause;
+  }
+
+  function resolveMove() {
+    // 壳子下发 walk / gallop；缺剪辑时回退到另一个。
+    const want = walkGait === 'gallop' ? 'Gallop' : 'Walk';
+    const other = want === 'Gallop' ? 'Walk' : 'Gallop';
+    if (actions[want]) { return want; }
+    if (actions[other]) { return other; }
+    return 'Walk';
   }
 
   function updateAction(fade) {
-    if (!ready || runActive) { return; }
-    playAction(walking ? 'Walk' : 'Idle', fade === undefined ? 0.2 : fade);
+    if (!ready || busy()) { return; }
+    playAction(walking ? resolveMove() : 'Idle', fade === undefined ? 0.2 : fade);
+  }
+
+  function playOneshot(name, fade, pad) {
+    if (!playAction(name, fade)) { return false; }
+    const clip = actions[name].getClip();
+    busyUntil = elapsed + Math.max(0.4, (clip ? clip.duration : 1) - (pad || 0.12));
+    return true;
   }
 
   // 骨骼局部轴与世界竖直轴不一致，用世界坐标的偏航/俯仰换算到父骨骼空间后叠加。
@@ -177,11 +214,33 @@
     const delta = Math.min(clock.getDelta(), 0.1);
     elapsed += delta;
 
-    // Gallop_Jump 是一次性的点击反应；这里按时间兜底，进度暂停时也不会卡住。
-    if (runActive && elapsed >= runUntil) {
-      runActive = false;
+    // 一次性动作结束后回 Idle/Gallop；Death 播完后真正暂停。
+    if (busyUntil && elapsed >= busyUntil) {
+      busyUntil = 0;
+      if (pendingPause) {
+        pendingPause = false;
+        paused = true;
+        resetWalkPose();
+        renderer.setAnimationLoop(null);
+        renderer.render(scene, camera);
+        return;
+      }
+      idleSince = 0;
+      nextEatAt = 10 + Math.random() * 16;
       updateAction(0.18);
     }
+
+    // 待机一会儿后偶尔吃东西。
+    if (!walking && !dragging && !busy() && currentName === 'Idle') {
+      idleSince += delta;
+      if (idleSince >= nextEatAt && actions.Eating) {
+        idleSince = 0;
+        playOneshot('Eating', 0.18, 0.1);
+      }
+    } else if (walking || dragging) {
+      idleSince = 0;
+    }
+
     if (mixer) { mixer.update(delta); }
 
     // 视线：在动画写入骨骼姿态后叠加旋转，让整个头（含耳朵）跟随鼠标方向。
@@ -191,16 +250,16 @@
       applyGaze(gazeBone, gazeX * 0.32, -gazeY * 0.18);
     }
 
-    // 点击反应：0.9 秒的小跳。
+    // 点击反应：小跳（Attack / Gallop_Jump 共用 hop）。
     const reactLeft = Math.max(0, reactUntil - elapsed);
-    const react = reactLeft > 0 ? Math.sin((1 - reactLeft / REACT_DURATION) * Math.PI) : 0;
+    const react = reactLeft > 0 ? Math.sin((1 - reactLeft / REACT_HOP) * Math.PI) : 0;
 
     // 被拖动时轻微离地并晃动，像被拎在手里。
     dragAmount += ((dragging ? 1 : 0) - dragAmount) * Math.min(1, delta * 10);
 
-    // 巡逻走动：身体随步频起伏并转向行进方向。
+    // 巡逻起伏：Gallop 稍快，Walk 稍慢。
     walkAmount += ((walking ? 1 : 0) - walkAmount) * Math.min(1, delta * 8);
-    const walkPhase = elapsed * Math.PI * 2 / 1.042;
+    const walkPhase = elapsed * Math.PI * 2 / (currentName === 'Gallop' ? 0.72 : 1.042);
     pet.position.y = 0.015 * walkAmount * Math.abs(Math.sin(walkPhase))
       + 0.14 * react + 0.05 * dragAmount;
     pet.rotation.z = 0.05 * dragAmount * Math.sin(elapsed * 8);
@@ -219,15 +278,29 @@
   }
 
   function setPaused(value) {
-    paused = !!value;
-    if (paused) {
+    if (value) {
+      walking = false;
       resetWalkPose();
+      if (ready && actions.Death && !paused) {
+        pendingPause = true;
+        playOneshot('Death', 0.12, 0.05);
+        renderer.setAnimationLoop(animate);
+        return;
+      }
+      paused = true;
+      pendingPause = false;
+      busyUntil = 0;
       renderer.setAnimationLoop(null);
       renderer.render(scene, camera);
-    } else {
-      clock.getDelta();
-      renderer.setAnimationLoop(animate);
+      return;
     }
+    pendingPause = false;
+    busyUntil = 0;
+    paused = false;
+    idleSince = 0;
+    clock.getDelta();
+    playAction('Idle', 0.15);
+    renderer.setAnimationLoop(animate);
   }
 
   function resize() {
@@ -246,18 +319,23 @@
       gazeTargetY = Math.max(-1, Math.min(1, y || 0));
     },
     react: function () {
-      if (!ready) { return; }
-      runActive = true;
-      reactUntil = elapsed + REACT_DURATION;
-      runUntil = elapsed + Math.max(0.6, runDuration - 0.15);
-      playAction('Gallop_Jump', 0.12);
+      if (!ready || pendingPause) { return; }
+      const pick = (actions.Attack && Math.random() < 0.45) ? 'Attack' : 'Gallop_Jump';
+      reactUntil = elapsed + REACT_HOP;
+      playOneshot(pick, 0.12, 0.12);
     },
     setDragging: function (value) {
       dragging = !!value;
     },
-    setWalking: function (value, direction) {
+    setWalking: function (value, direction, gait) {
       walking = !!value;
       walkDir = direction < 0 ? -1 : 1;
+      walkGait = gait === 'gallop' ? 'gallop' : 'walk';
+      if (walking) {
+        idleSince = 0;
+        pendingPause = false;
+        busyUntil = 0;
+      }
       updateAction(0.22);
     }
   };

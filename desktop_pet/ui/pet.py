@@ -24,7 +24,9 @@ WINDOW_3D = QSize(220, 340)
 VIEW3D_TOP = 88
 
 # 偶尔巡逻：静止一段时间后沿当前屏幕水平走几步，到边缘掉头。
+# Gallop 约为 Walk 的 1.7 倍，与 3D 奔跑步态对齐。
 WALK_SPEED = 45
+GALLOP_SPEED = 75
 WALK_MIN_MS = 3000
 WALK_MAX_MS = 6000
 WALK_IDLE_MIN_MS = 20000
@@ -124,6 +126,7 @@ class Pet(QWidget):
         self.walking_enabled = owner.settings.get('pet_walking', True)
         self.walking = False
         self.walk_direction = 1
+        self.walk_gait = 'walk'
         self.walk_until = 0.0
         self.walk_last = 0.0
         self.walk_timer = QTimer(self)
@@ -264,6 +267,7 @@ class Pet(QWidget):
         elif self.x() + self.width() >= bounds.right():
             self.walk_direction = -1
         self.walking = True
+        self.walk_gait = 'gallop' if random.random() < 0.5 else 'walk'
         self.walk_last = time.monotonic()
         self.walk_until = self.walk_last + random.randint(WALK_MIN_MS, WALK_MAX_MS) / 1000
         self.walk_timer.start()
@@ -277,7 +281,8 @@ class Pet(QWidget):
             self.stop_walking()
             return
         bounds = self.walk_bounds()
-        x = self.x() + WALK_SPEED * delta * self.walk_direction
+        speed = GALLOP_SPEED if self.walk_gait == 'gallop' else WALK_SPEED
+        x = self.x() + speed * delta * self.walk_direction
         if x <= bounds.left():
             x = bounds.left()
             self.walk_direction = 1
@@ -301,7 +306,10 @@ class Pet(QWidget):
     def set_3d_walking(self, value, direction):
         if self.mode == '3d' and self.view3d is not None:
             flag = 'true' if value else 'false'
-            self.view3d.page().runJavaScript(f'window.pet3d && window.pet3d.setWalking({flag}, {direction})')
+            gait = self.walk_gait if value else 'walk'
+            self.view3d.page().runJavaScript(
+                f'window.pet3d && window.pet3d.setWalking({flag}, {direction}, {gait!r})'
+            )
 
     def toggle_walking(self):
         self.walking_enabled = not self.walking_enabled
