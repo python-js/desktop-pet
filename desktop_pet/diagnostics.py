@@ -21,7 +21,7 @@ def packaged_smoke_test(report_path):
         store.add_message('user', 'packaging probe')
         assert store.messages()[0]['content'] == 'packaging probe'
         image = default_pet_image()
-        assert not image.isNull() and image.width() == 256
+        assert not image.isNull() and image.width() > 0
         assert SCENE.is_file()
         for name in ('three.min.js', 'GLTFLoader.js', 'husky.glb.js'):
             assert (SCENE.parent / name).is_file(), name

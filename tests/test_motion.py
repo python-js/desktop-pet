@@ -10,6 +10,7 @@ from PySide6.QtGui import QImage, QColor, QPainter
 from PySide6.QtCore import Qt
 from desktop_pet.motion import generate_motion, save_motion
 from desktop_pet.animations import load_sequences
+from desktop_pet.ui.pet import default_pet_image
 
 
 def source_image():
@@ -77,7 +78,8 @@ class MotionTests(unittest.TestCase):
                 self.assertFalse(second.pet.pixmap.isNull())
                 second.apply_pet_image(None, None)
                 self.assertNotIn('pet_image', second.settings)
-                self.assertTrue(second.pet.pixmap.isNull())
+                self.assertFalse(second.pet.pixmap.isNull())
+                self.assertEqual(second.pet.pixmap.size(), default_pet_image().size())
                 second.apply_pet_image(image_path, None)
                 self.assertEqual(second.settings['pet_image'], image_path)
                 self.assertFalse(second.pet.pixmap.isNull())
@@ -115,7 +117,8 @@ class MotionTests(unittest.TestCase):
                 self.assertNotIn('pet_image', window.settings)
                 self.assertEqual(window.settings['pet_images'], [])
                 self.assertFalse(Path(image_path).exists())
-                self.assertTrue(window.pet.pixmap.isNull())
+                self.assertFalse(window.pet.pixmap.isNull())
+                self.assertEqual(window.pet.pixmap.size(), default_pet_image().size())
             finally:
                 self.close_windows([window])
 
